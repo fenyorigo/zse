@@ -1,0 +1,84 @@
+import SwiftUI
+
+struct AccountSidebarView: View {
+    @ObservedObject var viewModel: AccountSidebarViewModel
+    @Binding var selection: SidebarSelection?
+
+    var body: some View {
+        List(selection: $selection) {
+            ForEach(viewModel.sections) { sectionModel in
+                Section {
+                    if sectionModel.nodes.isEmpty {
+                        Text("No accounts")
+                            .font(.footnote)
+                            .foregroundStyle(.tertiary)
+                    } else {
+                        ForEach(sectionModel.nodes) { node in
+                            SidebarNodeRow(node: node, selection: $selection)
+                        }
+                    }
+                } header: {
+                    Text(sectionModel.section.title)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .listStyle(.sidebar)
+    }
+}
+
+private struct SidebarNodeRow: View {
+    let node: SidebarNode
+    @Binding var selection: SidebarSelection?
+    @State private var isExpanded = true
+
+    var body: some View {
+        if node.children.isEmpty {
+            selectableLabel
+        } else {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                ForEach(node.children) { childNode in
+                    SidebarNodeRow(node: childNode, selection: $selection)
+                }
+            } label: {
+                selectableLabel
+            }
+        }
+    }
+
+    private var selectableLabel: some View {
+        label(for: node)
+            .contentShape(Rectangle())
+            .tag(node.selection)
+            .onTapGesture {
+                if let nodeSelection = node.selection {
+                    selection = nodeSelection
+                }
+            }
+    }
+
+    @ViewBuilder
+    private func label(for node: SidebarNode) -> some View {
+        let isSelected = selection == node.selection
+
+        HStack {
+            switch node.kind {
+            case .grouping:
+                Label(node.title, systemImage: "folder")
+            case .currency:
+                Label(node.title, systemImage: "coloncurrencysign.circle")
+            case .account(let account):
+                Label(node.title, systemImage: account.isGroup ? "folder" : "building.columns")
+            }
+
+            Spacer(minLength: 12)
+
+            if let formattedBalance = node.formattedBalance {
+                Text(formattedBalance)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .fontWeight(isSelected ? .semibold : .regular)
+    }
+}
