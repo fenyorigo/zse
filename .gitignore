@@ -2,3 +2,8 @@
 Packages/*/.build/
 .swiftpm/
 DerivedData/
+.DS_Store
+**/.DS_Store
+**/xcuserdata/
+*.xcuserstate
+Packages/ZseCore/.swiftpm/xcode/xcuserdata/
