@@ -24,7 +24,7 @@ struct EditTransactionSheet: View {
                 }
                 Picker("State", selection: $viewModel.state) {
                     Text("Uncleared").tag("uncleared")
-                    Text("Reconciling").tag("reconciling")
+                    Text("Pending").tag("reconciling")
                     Text("Cleared").tag("cleared")
                 }
 

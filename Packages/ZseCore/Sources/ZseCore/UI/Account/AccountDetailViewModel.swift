@@ -118,6 +118,13 @@ final class AccountDetailViewModel: ObservableObject {
         return account
     }
 
+    var currentPostableTransactions: [TransactionListItem] {
+        guard case let .postable(_, transactions) = state else {
+            return []
+        }
+        return transactions
+    }
+
     func reloadCurrentAccount(selecting transactionID: Int64? = nil) {
         guard let currentAccount = currentPostableAccount else {
             return
@@ -380,6 +387,17 @@ final class AccountDetailViewModel: ObservableObject {
                     db: db
                 )
             }
+        }
+
+        transactionEditErrorMessage = nil
+        reloadCurrentAccount()
+    }
+
+    func updateTransactionStates(transactionIDs: Set<Int64>, to state: String) throws {
+        let sortedTransactionIDs = transactionIDs.sorted()
+
+        for transactionID in sortedTransactionIDs {
+            try transactionService.changeTransactionState(transactionID: transactionID, state: state)
         }
 
         transactionEditErrorMessage = nil

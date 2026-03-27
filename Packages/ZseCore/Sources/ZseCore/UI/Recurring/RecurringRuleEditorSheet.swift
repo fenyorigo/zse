@@ -36,7 +36,7 @@ struct RecurringRuleEditorSheet: View {
 
                 Picker("Default Status", selection: $viewModel.defaultState) {
                     Text("Uncleared").tag("uncleared")
-                    Text("Reconciling").tag("reconciling")
+                    Text("Pending").tag("reconciling")
                     Text("Cleared").tag("cleared")
                 }
 

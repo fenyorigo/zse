@@ -185,6 +185,35 @@ enum Migrations {
             }
         }
 
+        migrator.registerMigration("createAppPreferences") { db in
+            try db.create(table: "app_preferences") { table in
+                table.column("id", .integer).primaryKey()
+                table.column("backup_directory_path", .text)
+                table.column("backup_directory_bookmark_data", .blob)
+                table.column("created_at", .text).notNull()
+                table.column("updated_at", .text).notNull()
+            }
+
+            var preferences = AppPreferences()
+            try preferences.insert(db)
+        }
+
+        migrator.registerMigration("createAccountUIPreferences") { db in
+            try db.create(table: "account_ui_preferences") { table in
+                table.column("account_id", .integer).primaryKey()
+                    .references("accounts", onDelete: .cascade)
+                table.column("transaction_status_filter", .text)
+                table.column("created_at", .text).notNull()
+                table.column("updated_at", .text).notNull()
+            }
+        }
+
+        migrator.registerMigration("addBackupDirectoryBookmarkToAppPreferences") { db in
+            try db.alter(table: "app_preferences") { table in
+                table.add(column: "backup_directory_bookmark_data", .blob)
+            }
+        }
+
         return migrator
     }()
 }

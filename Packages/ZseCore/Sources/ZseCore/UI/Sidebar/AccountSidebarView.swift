@@ -76,9 +76,24 @@ private struct SidebarNodeRow: View {
             if let formattedBalance = node.formattedBalance {
                 Text(formattedBalance)
                     .font(.system(.footnote, design: .monospaced))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isSelected ? .white : .secondary)
             }
         }
+        .foregroundStyle(isSelected ? .white : .primary)
         .fontWeight(isSelected ? .semibold : .regular)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(
+                    isSelected
+                        ? Color(
+                            red: 43.0 / 255.0,
+                            green: 81.0 / 255.0,
+                            blue: 85.0 / 255.0
+                        )
+                        : Color.clear
+                )
+        )
     }
 }

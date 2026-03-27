@@ -9,9 +9,9 @@ public struct ZseCommands: Commands {
 
     public var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("Back Up Database...") {
+            Button("Back Up Database") {
                 do {
-                    _ = try appState.backupDatabaseInteractively()
+                    _ = try appState.createTimestampedBackup()
                 } catch {
                     appState.reportError(error)
                 }

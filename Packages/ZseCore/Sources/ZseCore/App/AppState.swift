@@ -48,9 +48,12 @@ public final class AppState: ObservableObject {
     @Published private(set) var lastSuccessfulRecurringGenerationAt: Date?
     @Published private(set) var lastFailedRecurringGenerationAt: Date?
     @Published private(set) var lastRecurringGenerationErrorMessage: String?
+    @Published private(set) var preferredBackupDirectoryPath: String?
 
     let databaseManager: DatabaseManager
     let accountRepository: AccountRepository
+    let appPreferencesRepository: AppPreferencesRepository
+    let accountUIPreferenceRepository: AccountUIPreferenceRepository
     let currencyRepository: CurrencyRepository
     let fxRateRepository: FxRateRepository
     let partnerRepository: PartnerRepository
@@ -62,11 +65,14 @@ public final class AppState: ObservableObject {
     let fxRateImportService: FxRateImportService
     let rollupValuationService: RollupValuationService
     let databaseMaintenanceService: DatabaseMaintenanceService
+    private var activeBackupFolderSecurityScopedURL: URL?
 
     public init() {
         let databaseManager = DatabaseManager.shared
         self.databaseManager = databaseManager
         self.accountRepository = AccountRepository(databaseManager: databaseManager)
+        self.appPreferencesRepository = AppPreferencesRepository(databaseManager: databaseManager)
+        self.accountUIPreferenceRepository = AccountUIPreferenceRepository(databaseManager: databaseManager)
         self.currencyRepository = CurrencyRepository(databaseManager: databaseManager)
         self.fxRateRepository = FxRateRepository(databaseManager: databaseManager)
         self.partnerRepository = PartnerRepository(databaseManager: databaseManager)
@@ -91,11 +97,18 @@ public final class AppState: ObservableObject {
         )
         self.fxRateImportService = FxRateImportService(fxRateRepository: self.fxRateRepository)
         self.rollupValuationService = RollupValuationService(fxRateRepository: self.fxRateRepository)
-        self.databaseMaintenanceService = DatabaseMaintenanceService(databaseManager: databaseManager)
+        self.databaseMaintenanceService = DatabaseMaintenanceService(
+            databaseManager: databaseManager,
+            appPreferencesRepository: self.appPreferencesRepository
+        )
 
         loadAppMetadata()
         loadOperationalMetadata()
+        refreshBackupDirectoryPreference()
         refreshDashboard()
+        DispatchQueue.main.async { [weak self] in
+            self?.validateBackupFolderAccessOnStartup()
+        }
 
         Task {
             await refreshFxRatesOnStartup()
@@ -128,6 +141,7 @@ public final class AppState: ObservableObject {
 
     func revealBackupFolderInFinder() {
         do {
+            _ = try ensureBackupFolderAccessForPreferredFolder()
             let backupFolderURL = try databaseMaintenanceService.backupFolderURL()
             NSWorkspace.shared.activateFileViewerSelecting([backupFolderURL])
         } catch {
@@ -135,22 +149,48 @@ public final class AppState: ObservableObject {
         }
     }
 
-    @discardableResult
-    func backupDatabaseInteractively() throws -> URL? {
-        let panel = NSSavePanel()
-        panel.title = "Back Up Database"
+    func chooseBackupFolderInteractively() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Backup Folder"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
         panel.canCreateDirectories = true
-        panel.isExtensionHidden = false
-        panel.allowedContentTypes = [UTType(filenameExtension: "sqlite") ?? .data]
-        panel.nameFieldStringValue = try databaseMaintenanceService
-            .makeTimestampedBackupURL(prefix: "zse_backup")
-            .lastPathComponent
-        panel.directoryURL = try databaseMaintenanceService.backupFolderURL()
+        panel.directoryURL = try? databaseMaintenanceService.backupFolderURL()
 
-        guard panel.runModal() == .OK, let destinationURL = panel.url else {
-            return nil
+        guard panel.runModal() == .OK, let folderURL = panel.url else {
+            return
         }
 
+        do {
+            try saveBackupFolderPreference(folderURL)
+            preferredBackupDirectoryPath = folderURL.path
+            lastOperationMessage = "Backup folder updated."
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    var backupFolderPreferenceText: String {
+        if let preferredBackupDirectoryPath,
+           !preferredBackupDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return preferredBackupDirectoryPath
+        }
+
+        do {
+            return "Default: \(try databaseMaintenanceService.backupFolderURL().path)"
+        } catch {
+            return "Default backup folder unavailable"
+        }
+    }
+
+    @discardableResult
+    func createTimestampedBackup() throws -> URL? {
+        guard try ensureBackupFolderAccessForPreferredFolder() else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        let destinationURL = try databaseMaintenanceService.makeTimestampedBackupURL(prefix: "zse_backup")
         try databaseMaintenanceService.backupDatabase(to: destinationURL)
         lastOperationMessage = "Backup created: \(destinationURL.lastPathComponent)"
         lastErrorMessage = nil
@@ -159,6 +199,7 @@ public final class AppState: ObservableObject {
     }
 
     func pickRestoreBackupURL() -> URL? {
+        _ = try? ensureBackupFolderAccessForPreferredFolder()
         let panel = NSOpenPanel()
         panel.title = "Restore Database from Backup"
         panel.allowsMultipleSelection = false
@@ -263,7 +304,7 @@ public final class AppState: ObservableObject {
         if let latestFxRateDate {
             return "Rates used from \(latestFxRateDate)"
         }
-        return "Rates used from n/a"
+        return "Rates used from n/a. Waiting for initial FX refresh; mixed-currency balances may be unavailable."
     }
 
     var fxRefreshStatusText: String {
@@ -396,7 +437,141 @@ public final class AppState: ObservableObject {
         )
     }
 
+    private func refreshBackupDirectoryPreference() {
+        preferredBackupDirectoryPath = try? appPreferencesRepository.backupDirectoryPath()
+    }
+
+    private func validateBackupFolderAccessOnStartup() {
+        guard let preferredBackupDirectoryPath,
+              !preferredBackupDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+
+        do {
+            if try ensureBackupFolderAccessForPreferredFolder() {
+                return
+            }
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    private func ensureBackupFolderAccessIfNeeded() throws -> Bool {
+        guard let preferredBackupDirectoryPath,
+              !preferredBackupDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+
+        if activeBackupFolderSecurityScopedURL?.path == preferredBackupDirectoryPath {
+            return true
+        }
+
+        guard let bookmarkData = try appPreferencesRepository.backupDirectoryBookmarkData() else {
+            return false
+        }
+
+        var bookmarkIsStale = false
+        let folderURL = try URL(
+            resolvingBookmarkData: bookmarkData,
+            options: [.withSecurityScope],
+            relativeTo: nil,
+            bookmarkDataIsStale: &bookmarkIsStale
+        )
+
+        if let activeBackupFolderSecurityScopedURL {
+            activeBackupFolderSecurityScopedURL.stopAccessingSecurityScopedResource()
+            self.activeBackupFolderSecurityScopedURL = nil
+        }
+
+        guard folderURL.startAccessingSecurityScopedResource() else {
+            return false
+        }
+
+        activeBackupFolderSecurityScopedURL = folderURL
+
+        if bookmarkIsStale {
+            try saveBackupFolderPreference(folderURL)
+        }
+
+        return true
+    }
+
+    @discardableResult
+    private func ensureBackupFolderAccessForPreferredFolder() throws -> Bool {
+        guard let preferredBackupDirectoryPath,
+              !preferredBackupDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return true
+        }
+
+        if try ensureBackupFolderAccessIfNeeded() {
+            return true
+        }
+
+        guard requestBackupFolderAccessForSavedPreference() else {
+            return false
+        }
+
+        return try ensureBackupFolderAccessIfNeeded()
+    }
+
+    @discardableResult
+    private func requestBackupFolderAccessForSavedPreference() -> Bool {
+        let panel = NSOpenPanel()
+        panel.title = "Grant Access to Backup Folder"
+        panel.message = "Zse needs permission to access the configured backup folder after app restart."
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+
+        if let preferredBackupDirectoryPath,
+           !preferredBackupDirectoryPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: preferredBackupDirectoryPath, isDirectory: true)
+        }
+
+        guard panel.runModal() == .OK, let folderURL = panel.url else {
+            lastErrorMessage = "Backup folder access was not granted. Backups to the configured folder are unavailable until access is granted."
+            return false
+        }
+
+        do {
+            try saveBackupFolderPreference(folderURL)
+            preferredBackupDirectoryPath = folderURL.path
+            lastOperationMessage = "Backup folder access granted."
+            lastErrorMessage = nil
+            return true
+        } catch {
+            lastErrorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    private func saveBackupFolderPreference(_ folderURL: URL) throws {
+        let bookmarkData = try folderURL.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+
+        if let activeBackupFolderSecurityScopedURL {
+            activeBackupFolderSecurityScopedURL.stopAccessingSecurityScopedResource()
+            self.activeBackupFolderSecurityScopedURL = nil
+        }
+
+        guard folderURL.startAccessingSecurityScopedResource() else {
+            throw CocoaError(.fileReadNoPermission)
+        }
+
+        activeBackupFolderSecurityScopedURL = folderURL
+        try appPreferencesRepository.setBackupDirectory(path: folderURL.path, bookmarkData: bookmarkData)
+    }
+
     private func shouldAttemptFxRefreshToday() -> Bool {
+        if latestFxRateDate == nil {
+            return true
+        }
+
         let today = Self.startupRefreshDateFormatter.string(from: Date())
         return lastSuccessfulFxRefreshDate != today
     }

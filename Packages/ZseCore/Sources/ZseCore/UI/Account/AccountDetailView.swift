@@ -32,7 +32,7 @@ struct AccountDetailView: View {
     }
 
     private struct CreditCardAvailabilitySummary {
-        let creditLimit: Double
+        let creditLimit: Double?
         let availableBeforeNextReimbursement: Double?
         let nextReimbursementDate: String?
     }
@@ -43,6 +43,7 @@ struct AccountDetailView: View {
     @State private var isShowingTransactionViewSheet = false
     @State private var isShowingEditTransactionSheet = false
     @State private var isShowingBatchDateSheet = false
+    @State private var isShowingBatchStatusSheet = false
     @State private var recurringRuleTemplate: RecurringTransactionTemplate?
     @State private var isShowingRecurringRuleSheet = false
     @State private var inlineEditingTransactionID: Int64?
@@ -175,6 +176,11 @@ struct AccountDetailView: View {
                 applyBatchDateChange(newDate)
             }
         }
+        .sheet(isPresented: $isShowingBatchStatusSheet) {
+            BatchTransactionStatusSheet(initialState: selectedTransactionState) { newState in
+                applyBatchStatusChange(newState)
+            }
+        }
     }
 
     private func groupingNodeView(title: String) -> some View {
@@ -246,12 +252,19 @@ struct AccountDetailView: View {
                 .disabled(!hasMultipleSelection)
                 .opacity(hasMultipleSelection ? 1 : 0)
 
+                Button("Batch Change Status") {
+                    isShowingBatchStatusSheet = true
+                }
+                .controlSize(.small)
+                .disabled(!hasMultipleSelection)
+                .opacity(hasMultipleSelection ? 1 : 0)
+
                 Spacer()
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
 
-            filterBar(for: transactions)
+            filterBar(for: account, transactions: transactions)
 
             Group {
                 if filteredTransactions(transactions).isEmpty {
@@ -353,7 +366,7 @@ struct AccountDetailView: View {
                 selectedTransactionIDs = []
                 inlineEditingTransactionID = nil
                 transactionSortOrder = Self.defaultTransactionSortOrder
-                resetFilters()
+                resetFilters(persist: false)
                 loadFilterState(for: account.id)
             }
             .onChange(of: viewModel.selectedTransactionID) { _, newValue in
@@ -363,6 +376,36 @@ struct AccountDetailView: View {
                     finishInlineEditing(commit: false)
                 }
             }
+            if let creditCardAvailability = creditCardAvailabilitySummary(
+                for: account,
+                transactions: transactions
+            ) {
+                Divider()
+
+                HStack(spacing: 12) {
+                    compactMetricText(
+                        title: "Limit",
+                        value: displayCreditLimitText(creditCardAvailability.creditLimit)
+                    )
+                    compactMetricText(
+                        title: "Avail",
+                        value: creditCardAvailability.availableBeforeNextReimbursement.map {
+                            formattedAccountMetric($0, currency: "HUF")
+                        } ?? "N/A"
+                    )
+                    compactMetricText(
+                        title: "Next",
+                        value: creditCardAvailability.nextReimbursementDate ?? "N/A"
+                    )
+                    Spacer()
+                }
+                .font(.body)
+                .fontWeight(.semibold)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.bar)
+            }
         }
     }
 
@@ -371,8 +414,7 @@ struct AccountDetailView: View {
         transactions: [TransactionListItem]
     ) -> CreditCardAvailabilitySummary? {
         guard account.class == "liability",
-              account.subtype == "credit",
-              let creditLimit = account.creditLimit else {
+              account.subtype == "credit" else {
             return nil
         }
 
@@ -392,11 +434,13 @@ struct AccountDetailView: View {
             return displayRunningBalance(for: priorItem, accountClass: account.class)
         }
 
-        let availableBeforeNextReimbursement = usedBeforeReimbursement.map { creditLimit - $0 }
+        let availableBeforeNextReimbursement = account.creditLimit.flatMap { creditLimit in
+            usedBeforeReimbursement.map { creditLimit - $0 }
+        }
         let nextReimbursementDate = nextReimbursementIndex.map { orderedTransactions[$0].txnDate }
 
         return CreditCardAvailabilitySummary(
-            creditLimit: creditLimit,
+            creditLimit: account.creditLimit,
             availableBeforeNextReimbursement: availableBeforeNextReimbursement,
             nextReimbursementDate: nextReimbursementDate
         )
@@ -554,6 +598,14 @@ struct AccountDetailView: View {
         formattedAmount(amount, currency: currency)
     }
 
+    private func displayCreditLimitText(_ creditLimit: Double?) -> String {
+        guard let creditLimit, abs(creditLimit) > 0.000001 else {
+            return "not set"
+        }
+
+        return formattedAccountMetric(creditLimit, currency: "HUF")
+    }
+
     @ViewBuilder
     private func dateCell(for item: TransactionListItem) -> some View {
         if singleSelectedTransactionID == item.id,
@@ -600,7 +652,7 @@ struct AccountDetailView: View {
                 )
             ) {
                 Text("Uncleared").tag("uncleared")
-                Text("Reconciling").tag("reconciling")
+                Text("Pending").tag("reconciling")
                 Text("Cleared").tag("cleared")
             }
             .labelsHidden()
@@ -691,6 +743,10 @@ struct AccountDetailView: View {
         if hasMultipleSelection {
             Button("Batch Change Date") {
                 isShowingBatchDateSheet = true
+            }
+
+            Button("Batch Change Status") {
+                isShowingBatchStatusSheet = true
             }
 
             Button("Delete Selected", role: .destructive) {
@@ -904,90 +960,60 @@ struct AccountDetailView: View {
     }
 
     @ViewBuilder
-    private func filterBar(for transactions: [TransactionListItem]) -> some View {
-        HStack(spacing: 8) {
-            Picker("Status", selection: $statusFilter) {
-                ForEach(TransactionStatusFilter.allCases) { filter in
-                    Text(filter.title).tag(filter)
+    private func filterBar(for account: Account, transactions: [TransactionListItem]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Picker("Status", selection: $statusFilter) {
+                    ForEach(TransactionStatusFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
+                    }
                 }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .controlSize(.small)
-
-            Picker("Partner", selection: $selectedPartnerName) {
-                Text("All Partners").tag(Self.allPartnersFilterValue)
-                ForEach(partnerFilterOptions(for: transactions), id: \.self) { partnerName in
-                    Text(partnerName).tag(partnerName)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .controlSize(.small)
-
-            Picker("Category", selection: $selectedCategoryName) {
-                Text("All Categories").tag(Self.allCategoriesFilterValue)
-                ForEach(categoryFilterOptions(for: transactions), id: \.self) { categoryName in
-                    Text(categoryName).tag(categoryName)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .controlSize(.small)
-
-            TextField("Search", text: $searchText)
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.small)
-                .frame(width: 180)
-
-            Toggle("Projected", isOn: $includeProjectedRecurring)
-                .toggleStyle(.checkbox)
+                .labelsHidden()
+                .pickerStyle(.menu)
                 .controlSize(.small)
 
-            if let account = viewModel.currentPostableAccount,
-               let creditCardAvailability = creditCardAvailabilitySummary(
-                    for: account,
-                    transactions: transactions
-               ) {
-                creditCardAvailabilityInlineView(creditCardAvailability)
-            }
-
-            if hasActiveFilters {
-                Button("Clear") {
-                    resetFilters()
+                Picker("Partner", selection: $selectedPartnerName) {
+                    Text("All Partners").tag(Self.allPartnersFilterValue)
+                    ForEach(partnerFilterOptions(for: transactions), id: \.self) { partnerName in
+                        Text(partnerName).tag(partnerName)
+                    }
                 }
+                .labelsHidden()
+                .pickerStyle(.menu)
                 .controlSize(.small)
+
+                Picker("Category", selection: $selectedCategoryName) {
+                    Text("All Categories").tag(Self.allCategoriesFilterValue)
+                    ForEach(categoryFilterOptions(for: transactions), id: \.self) { categoryName in
+                        Text(categoryName).tag(categoryName)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .controlSize(.small)
+
+                TextField("Search", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                    .controlSize(.small)
+                    .frame(width: 180)
+
+                Toggle("Projected", isOn: $includeProjectedRecurring)
+                    .toggleStyle(.checkbox)
+                    .controlSize(.small)
+
+                if hasActiveFilters {
+                    Button("Clear") {
+                        resetFilters()
+                    }
+                    .controlSize(.small)
+                }
+
+                Spacer()
             }
 
-            Spacer()
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 6)
-    }
-
-    private func creditCardAvailabilityInlineView(_ summary: CreditCardAvailabilitySummary) -> some View {
-        HStack(spacing: 8) {
-            compactMetricText(
-                title: "Limit",
-                value: formattedAccountMetric(summary.creditLimit, currency: "HUF")
-            )
-            compactMetricText(
-                title: "Avail",
-                value: summary.availableBeforeNextReimbursement.map {
-                    formattedAccountMetric($0, currency: "HUF")
-                } ?? "N/A"
-            )
-            compactMetricText(
-                title: "Next",
-                value: summary.nextReimbursementDate ?? "N/A"
-            )
-        }
-        .font(.body)
-        .fontWeight(.semibold)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .truncationMode(.tail)
-        .layoutPriority(1)
     }
 
     private func compactMetricText(title: String, value: String) -> some View {
@@ -1042,6 +1068,10 @@ struct AccountDetailView: View {
         return date(from: item.txnDate)
     }
 
+    private var selectedTransactionState: String {
+        selectedTransactionListItem?.state ?? "uncleared"
+    }
+
     private var deleteConfirmationTitle: String {
         let count = pendingDeleteTransactionIDs.count
         return count == 1 ? "Delete 1 transaction?" : "Delete \(count) transactions?"
@@ -1067,6 +1097,17 @@ struct AccountDetailView: View {
         do {
             finishInlineEditing(commit: false)
             try viewModel.updateTransactionDates(transactionIDs: selectedTransactionIDs, to: date)
+            inlineEditingTransactionID = nil
+            onTransactionUpdated()
+        } catch {
+            viewModel.transactionEditErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func applyBatchStatusChange(_ state: String) {
+        do {
+            finishInlineEditing(commit: false)
+            try viewModel.updateTransactionStates(transactionIDs: selectedTransactionIDs, to: state)
             inlineEditingTransactionID = nil
             onTransactionUpdated()
         } catch {
@@ -1101,6 +1142,11 @@ struct AccountDetailView: View {
             searchText: searchText,
             includeProjectedRecurring: includeProjectedRecurring
         )
+
+        try? appState.accountUIPreferenceRepository.saveTransactionStatusFilter(
+            accountID: accountID,
+            filter: statusFilter.rawValue
+        )
     }
 
     private func loadFilterState(for accountID: Int64?) {
@@ -1114,7 +1160,15 @@ struct AccountDetailView: View {
         }
 
         let filterState = filterStateByAccountID[accountID] ?? AccountFilterState()
-        statusFilter = filterState.statusFilter
+        let savedFilter = try? appState.accountUIPreferenceRepository
+            .savedTransactionStatusFilter(accountID: accountID)
+
+        if let savedFilter = savedFilter ?? nil,
+           let persistedStatusFilter = TransactionStatusFilter(rawValue: savedFilter) {
+            statusFilter = persistedStatusFilter
+        } else {
+            statusFilter = filterState.statusFilter
+        }
         selectedPartnerName = filterState.selectedPartnerName
         selectedCategoryName = filterState.selectedCategoryName
         searchText = filterState.searchText
@@ -1153,13 +1207,15 @@ struct AccountDetailView: View {
         }
     }
 
-    private func resetFilters() {
+    private func resetFilters(persist: Bool = true) {
         statusFilter = .all
         selectedPartnerName = Self.allPartnersFilterValue
         selectedCategoryName = Self.allCategoriesFilterValue
         searchText = ""
         includeProjectedRecurring = true
-        storeCurrentFilterState()
+        if persist {
+            storeCurrentFilterState()
+        }
     }
 
     private var hasActiveFilters: Bool {
@@ -1237,6 +1293,50 @@ private struct BatchTransactionDateSheet: View {
 
                 Button("Apply") {
                     applyHandler(selectedDate)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 320)
+    }
+}
+
+private struct BatchTransactionStatusSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedState: String
+
+    let applyHandler: (String) -> Void
+
+    init(initialState: String, applyHandler: @escaping (String) -> Void) {
+        _selectedState = State(initialValue: initialState)
+        self.applyHandler = applyHandler
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Batch Change Status")
+                .font(.title3)
+                .fontWeight(.semibold)
+
+            Picker("New Status", selection: $selectedState) {
+                Text("Uncleared").tag("uncleared")
+                Text("Pending").tag("reconciling")
+                Text("Cleared").tag("cleared")
+            }
+            .pickerStyle(.menu)
+
+            HStack {
+                Spacer()
+
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button("Apply") {
+                    applyHandler(selectedState)
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)

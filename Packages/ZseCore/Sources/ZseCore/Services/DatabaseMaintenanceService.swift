@@ -33,15 +33,23 @@ enum DatabaseWipeScope: String, CaseIterable, Identifiable {
 
 struct DatabaseMaintenanceService {
     private let databaseManager: DatabaseManager
+    private let appPreferencesRepository: AppPreferencesRepository
     private let fileManager = FileManager.default
 
-    init(databaseManager: DatabaseManager) {
+    init(databaseManager: DatabaseManager, appPreferencesRepository: AppPreferencesRepository) {
         self.databaseManager = databaseManager
+        self.appPreferencesRepository = appPreferencesRepository
     }
 
     func backupFolderURL() throws -> URL {
-        let backupsURL = URL(fileURLWithPath: databaseManager.databaseFolderPath, isDirectory: true)
-            .appendingPathComponent("Backups", isDirectory: true)
+        let backupsURL: URL
+        if let preferredPath = try appPreferencesRepository.backupDirectoryPath(),
+           !preferredPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            backupsURL = URL(fileURLWithPath: preferredPath, isDirectory: true)
+        } else {
+            backupsURL = URL(fileURLWithPath: databaseManager.databaseFolderPath, isDirectory: true)
+                .appendingPathComponent("Backups", isDirectory: true)
+        }
         try fileManager.createDirectory(at: backupsURL, withIntermediateDirectories: true)
         return backupsURL
     }

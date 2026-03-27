@@ -21,8 +21,27 @@ struct DatabaseMaintenanceSheet: View {
                 Text("Backup and Restore")
                     .font(.headline)
 
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Backup Folder")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    HStack(alignment: .top, spacing: 8) {
+                        Text(appState.backupFolderPreferenceText)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                        Button("Choose...") {
+                            appState.chooseBackupFolderInteractively()
+                        }
+                        .controlSize(.small)
+                    }
+                }
+
                 HStack(spacing: 8) {
-                    Button("Back Up Database...") {
+                    Button("Back Up Database") {
                         backupDatabase()
                     }
 
@@ -88,7 +107,7 @@ struct DatabaseMaintenanceSheet: View {
             }
         }
         .padding(16)
-        .frame(width: 620)
+        .frame(width: 680)
         .confirmationDialog(
             "Restore Database?",
             isPresented: Binding(
@@ -129,7 +148,7 @@ struct DatabaseMaintenanceSheet: View {
 
     private func backupDatabase() {
         do {
-            guard let backupURL = try appState.backupDatabaseInteractively() else {
+            guard let backupURL = try appState.createTimestampedBackup() else {
                 return
             }
             operationMessage = "Backup created: \(backupURL.lastPathComponent)"
