@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 enum ImportFileFormat: String {
     case moneydanceTab = "Moneydance TXT (tab-delimited)"
-    case delimitedText = "Delimited text"
+    case zseFlat = "zse flat (one row per transaction)"
 }
 
 struct ImportWarning: Identifiable {
@@ -34,6 +34,7 @@ struct ParsedImportTransaction {
     let counterpartPath: String
     let counterpartAmount: Double
     let kind: Kind
+    let usedFallbackClassification: Bool
     let accountCurrency: String
     let counterpartCurrency: String
     let lineNumbers: [Int]
@@ -75,10 +76,13 @@ struct ImportPreviewSummary {
     let continuationRowCount: Int
     let accountsToCreateCount: Int
     let categoriesToCreateCount: Int
+    let sourceCategoryPathCount: Int
+    let missingCategoryPathsCount: Int
     let incomeCount: Int
     let expenseCount: Int
     let sameCurrencyTransferCount: Int
     let crossCurrencyTransferCount: Int
+    let fallbackClassificationCount: Int
     let warningsCount: Int
     let skippedRowCount: Int
 }
@@ -87,6 +91,8 @@ struct ImportCommitResult {
     let importedTransactionCount: Int
     let createdAccountsCount: Int
     let createdCategoriesCount: Int
+    let sourceCategoryPathCount: Int
+    let missingCategoryPathsAfterImportCount: Int
     let createdBankAccountsCount: Int
     let createdCashAccountsCount: Int
     let createdInvestmentAccountsCount: Int
@@ -96,6 +102,7 @@ struct ImportCommitResult {
     let expenseCount: Int
     let sameCurrencyTransferCount: Int
     let crossCurrencyTransferCount: Int
+    let fallbackClassificationCount: Int
     let skippedRowCount: Int
     let warningsCount: Int
 }
@@ -156,6 +163,8 @@ final class ImportViewModel: ObservableObject {
     @Published private(set) var resultSummary: ImportCommitResult?
     @Published private(set) var isImporting = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var selectedFormat: ManualImportFormat = .moneydance
+    @Published private(set) var zseOptions = ZseFlatFileOptions()
 
     private let importService: ImportService
 
@@ -163,7 +172,7 @@ final class ImportViewModel: ObservableObject {
         self.importService = importService
     }
 
-    func chooseFile() {
+    func chooseFile(format: ManualImportFormat, zseOptions: ZseFlatFileOptions) {
         let panel = NSOpenPanel()
         panel.title = "Import Transactions"
         panel.allowsMultipleSelection = false
@@ -180,17 +189,28 @@ final class ImportViewModel: ObservableObject {
             return
         }
 
+        selectedFormat = format
+        self.zseOptions = zseOptions
         selectedFileURL = fileURL
-        loadPreview()
+        loadPreview(format: format, zseOptions: zseOptions)
     }
 
-    func loadPreview() {
+    func loadPreview(format: ManualImportFormat? = nil, zseOptions: ZseFlatFileOptions? = nil) {
         guard let selectedFileURL else {
             return
         }
 
+        let effectiveFormat = format ?? selectedFormat
+        let effectiveOptions = zseOptions ?? self.zseOptions
+        selectedFormat = effectiveFormat
+        self.zseOptions = effectiveOptions
+
         do {
-            let parsedFile = try importService.parseFile(at: selectedFileURL)
+            let parsedFile = try importService.parseFile(
+                at: selectedFileURL,
+                format: effectiveFormat,
+                zseOptions: effectiveOptions
+            )
             preview = parsedFile
             previewSummary = try importService.buildPreviewSummary(from: parsedFile)
             resultSummary = nil
@@ -248,11 +268,38 @@ struct ImportService {
         return try parser.parse(contents: contents)
     }
 
+    func parseFile(
+        at fileURL: URL,
+        format: ManualImportFormat,
+        zseOptions: ZseFlatFileOptions
+    ) throws -> ParsedImportFile {
+        let contents = try String(contentsOf: fileURL, encoding: .utf8)
+
+        switch format {
+        case .moneydance:
+            let parser = MoneydanceImportParser(delimiter: detectDelimiter(in: contents))
+            return try parser.parse(contents: contents)
+        case .zse:
+            let parser = ZseFlatImportParser(options: zseOptions)
+            return try parser.parse(contents: contents)
+        }
+    }
+
     func buildPreviewSummary(from parsedFile: ParsedImportFile) throws -> ImportPreviewSummary {
         let existingAccounts = try accountRepository.getAllAccounts()
         let existingPaths = buildExistingAccountPathSet(existingAccounts)
         let accountPathsToCreate = buildAccountPathsToCreate(parsedFile: parsedFile, existingPaths: existingPaths)
         let categoryPathsToCreate = buildCategoryPathsToCreate(parsedFile: parsedFile, existingPaths: existingPaths)
+        let sourceCategoryPaths = Set(
+            parsedFile.transactions.compactMap { transaction in
+                switch transaction.kind {
+                case .income, .expense:
+                    return transaction.counterpartPath
+                case .sameCurrencyTransfer, .crossCurrencyTransfer:
+                    return nil
+                }
+            }
+        )
 
         return ImportPreviewSummary(
             formatDescription: parsedFile.format.rawValue,
@@ -262,10 +309,13 @@ struct ImportService {
             continuationRowCount: parsedFile.continuationRowCount,
             accountsToCreateCount: accountPathsToCreate.count,
             categoriesToCreateCount: categoryPathsToCreate.count,
+            sourceCategoryPathCount: sourceCategoryPaths.count,
+            missingCategoryPathsCount: sourceCategoryPaths.subtracting(existingPaths).count,
             incomeCount: parsedFile.transactions.filter { $0.kind == .income }.count,
             expenseCount: parsedFile.transactions.filter { $0.kind == .expense }.count,
             sameCurrencyTransferCount: parsedFile.transactions.filter { $0.kind == .sameCurrencyTransfer }.count,
             crossCurrencyTransferCount: parsedFile.transactions.filter { $0.kind == .crossCurrencyTransfer }.count,
+            fallbackClassificationCount: parsedFile.transactions.filter(\.usedFallbackClassification).count,
             warningsCount: parsedFile.warnings.count,
             skippedRowCount: parsedFile.skippedRowCount
         )
@@ -273,7 +323,9 @@ struct ImportService {
 
     func commitImport(_ parsedFile: ParsedImportFile) throws -> ImportCommitResult {
         try transactionRepository.writeInTransaction { db in
-            let batchDeduplicatedTransactions = deduplicateImportBatchTransfers(parsedFile.transactions)
+            let batchDeduplicatedTransactions = parsedFile.format == .moneydanceTab
+                ? deduplicateImportBatchTransfers(parsedFile.transactions)
+                : parsedFile.transactions
             let transactionsToImport = try shouldSuppressImportDuplicates(db: db)
                 ? deduplicateParsedTransactions(batchDeduplicatedTransactions)
                 : batchDeduplicatedTransactions
@@ -306,12 +358,21 @@ struct ImportService {
             let categoryPaths = try ensureImportedCategories(
                 transactionsToImport,
                 existingAccountPaths: Set(importedAccounts.pathToID.keys),
-                protectedRealAccountPaths: Set(importedAccounts.pathToID.keys).subtracting(Set(importedCategoryPaths.keys)),
+                protectedRealAccountPaths: Set(importedAccounts.pathToID.keys)
+                    .subtracting(Set(importedCategoryPaths.map(\.key))),
                 structuralPaths: categoryStructuralPaths,
                 db: db
             )
             let accountPaths = importedAccounts.pathToID
             let categoryCounterpartPaths = importedCategoryPaths.merging(categoryPaths) { existing, _ in existing }
+            let sourceCategoryPaths: Set<String> = Set(
+                transactionsToImport.compactMap { transaction in
+                    guard transaction.kind == .income || transaction.kind == .expense else {
+                        return nil
+                    }
+                    return transaction.counterpartPath
+                }
+            )
             let directPostingCategoryAccountIDs = Set(
                 transactionsToImport.compactMap { transaction -> Int64? in
                     guard transaction.kind == .income || transaction.kind == .expense else {
@@ -498,6 +559,8 @@ struct ImportService {
                 importedTransactionCount: importedTransactionCount,
                 createdAccountsCount: importedAccounts.createdCount,
                 createdCategoriesCount: categoryPaths.count,
+                sourceCategoryPathCount: sourceCategoryPaths.count,
+                missingCategoryPathsAfterImportCount: sourceCategoryPaths.subtracting(Set(categoryCounterpartPaths.keys)).count,
                 createdBankAccountsCount: importedAccounts.counts.bankAccounts,
                 createdCashAccountsCount: importedAccounts.counts.cashAccounts,
                 createdInvestmentAccountsCount: importedAccounts.counts.investmentAccounts,
@@ -507,6 +570,7 @@ struct ImportService {
                 expenseCount: expenseCount,
                 sameCurrencyTransferCount: sameCurrencyTransferCount,
                 crossCurrencyTransferCount: crossCurrencyTransferCount,
+                fallbackClassificationCount: transactionsToImport.filter(\.usedFallbackClassification).count,
                 skippedRowCount: skippedRowCount,
                 warningsCount: parsedFile.warnings.count
             )
@@ -657,7 +721,9 @@ struct ImportService {
             account.subtype != expectedAccount.subtype ||
             account.currency != expectedAccount.currency ||
             account.isGroup != expectedAccount.isGroup ||
-            account.includeInNetWorth != expectedAccount.includeInNetWorth
+            account.includeInNetWorth != expectedAccount.includeInNetWorth ||
+            account.openingBalance != expectedAccount.openingBalance ||
+            account.openingBalanceDate != expectedAccount.openingBalanceDate
         else {
             return
         }
@@ -668,6 +734,8 @@ struct ImportService {
         account.currency = expectedAccount.currency
         account.isGroup = expectedAccount.isGroup
         account.includeInNetWorth = expectedAccount.includeInNetWorth
+        account.openingBalance = expectedAccount.openingBalance
+        account.openingBalanceDate = expectedAccount.openingBalanceDate
         account.updatedAt = Account.makeTimestamp()
         try account.update(db)
     }
@@ -737,13 +805,59 @@ struct ImportService {
         definitions: [MoneydanceAccountDefinition],
         pathToID: [String: Int64]
     ) -> [String: Int64] {
-        let categoryPaths = Set(
-            definitions.compactMap { definition in
+        let categoryPaths = makeDeclaredCategoryPaths(from: definitions)
+
+        return pathToID.filter { categoryPaths.contains($0.key) }
+    }
+
+    private func makeDeclaredCategoryPaths(
+        from accountDefinitions: [MoneydanceAccountDefinition]
+    ) -> Set<String> {
+        Set(
+            accountDefinitions.compactMap { definition in
                 isDeclaredCategoryDefinition(definition) ? definition.path : nil
             }
         )
+    }
 
-        return pathToID.filter { categoryPaths.contains($0.key) }
+    private func makeDeclaredCategoryClassByPath(
+        from accountDefinitions: [MoneydanceAccountDefinition]
+    ) -> [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: accountDefinitions.compactMap { definition in
+                let normalizedType = definition.type?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .uppercased()
+                    .replacingOccurrences(of: " ", with: "_")
+                    .replacingOccurrences(of: "-", with: "_") ?? ""
+
+                switch normalizedType {
+                case "INCOME":
+                    return (definition.path, "income")
+                case "EXPENSE":
+                    return (definition.path, "expense")
+                default:
+                    return nil
+                }
+            }
+        )
+    }
+
+    private func resolveDeclaredCategoryClass(
+        for path: String,
+        declaredCategoryClassByPath: [String: String]
+    ) -> String? {
+        var components = path.split(separator: ":").map(String.init)
+
+        while !components.isEmpty {
+            let candidate = components.joined(separator: ":")
+            if let categoryClass = declaredCategoryClassByPath[candidate] {
+                return categoryClass
+            }
+            _ = components.popLast()
+        }
+
+        return nil
     }
 
     private func isDeclaredCategoryDefinition(_ definition: MoneydanceAccountDefinition) -> Bool {
@@ -1052,6 +1166,7 @@ private extension ImportService {
             counterpartPath: preferred.counterpartPath,
             counterpartAmount: preferred.counterpartAmount,
             kind: preferred.kind,
+            usedFallbackClassification: preferred.usedFallbackClassification && other.usedFallbackClassification,
             accountCurrency: preferred.accountCurrency,
             counterpartCurrency: preferred.counterpartCurrency,
             lineNumbers: Array(Set(existing.lineNumbers + incoming.lineNumbers)).sorted()
@@ -1119,6 +1234,333 @@ private func normalizedImportValue(_ value: String?) -> String? {
     guard let value else { return nil }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
+}
+
+private struct ZseFlatImportParser {
+    private let options: ZseFlatFileOptions
+
+    init(options: ZseFlatFileOptions) {
+        self.options = options
+    }
+
+    func parse(contents: String) throws -> ParsedImportFile {
+        let lines = contents.components(separatedBy: .newlines).filter { !$0.isEmpty }
+        guard let headerLine = lines.first else {
+            throw ImportError.unsupportedFileFormat
+        }
+
+        let header = split(headerLine)
+        var warnings: [ImportWarning] = []
+        var transactions: [ParsedImportTransaction] = []
+        var definitionsByPath: [String: MoneydanceAccountDefinition] = [:]
+        var currencies = Set<String>()
+        var skippedRowCount = 0
+
+        for (index, line) in lines.dropFirst().enumerated() {
+            let lineNumber = index + 2
+            let cells = split(line)
+
+            do {
+                let row = try parseRow(cells: cells, header: header)
+                guard row.transaction != nil || !row.accountDefinitions.isEmpty else {
+                    skippedRowCount += 1
+                    continue
+                }
+
+                if let transaction = row.transaction {
+                    transactions.append(transaction)
+                }
+                row.accountDefinitions.forEach { definitionsByPath[$0.path] = $0 }
+                currencies.formUnion(row.accountDefinitions.map(\.currency))
+                if let transaction = row.transaction {
+                    currencies.insert(transaction.accountCurrency)
+                    currencies.insert(transaction.counterpartCurrency)
+                }
+            } catch {
+                warnings.append(
+                    ImportWarning(
+                        lineNumber: lineNumber,
+                        message: error.localizedDescription
+                    )
+                )
+                skippedRowCount += 1
+            }
+        }
+
+        return ParsedImportFile(
+            format: .zseFlat,
+            delimiter: options.delimiter.delimiter,
+            sourceAccountPath: nil,
+            sourceAccountCurrency: nil,
+            continuationRowCount: 0,
+            transactions: transactions,
+            accountDefinitions: Array(definitionsByPath.values),
+            currencies: currencies,
+            warnings: warnings,
+            skippedRowCount: skippedRowCount
+        )
+    }
+
+    private func parseRow(
+        cells: [String],
+        header: [String]
+    ) throws -> (transaction: ParsedImportTransaction?, accountDefinitions: [MoneydanceAccountDefinition]) {
+        func value(_ aliases: [String]) -> String? {
+            guard let index = headerIndex(in: header, aliases: aliases), index < cells.count else {
+                return nil
+            }
+            return normalizedImportValue(cells[index])
+        }
+
+        guard
+            let rawType = value(["Type"]),
+            let accountPath = value(["AccountPath"]),
+            let currency = value(["Currency"])
+        else {
+            throw ImportError.unsupportedFileFormat
+        }
+
+        let normalizedType = rawType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let accountOpeningBalance = value(["AccountOpeningBalance"]).flatMap(parseAmount)
+        let accountClass = value(["AccountClass"])
+        let accountSubtype = value(["AccountSubtype"])
+
+        let accountDefinition = MoneydanceAccountDefinition(
+            path: accountPath,
+            type: definitionType(forAccountClass: accountClass, subtype: accountSubtype, path: accountPath),
+            currency: currency,
+            openingBalance: accountOpeningBalance
+        )
+
+        if normalizedType == "account" {
+            return (nil, [accountDefinition])
+        }
+
+        guard
+            let rawDate = value(["Date"]),
+            let rawStatus = value(["Status"]),
+            let rawAmount = value(["Amount"])
+        else {
+            throw ImportError.unsupportedFileFormat
+        }
+
+        let date = options.dateFormat.normalizeForImport(rawDate)
+        guard let amount = parseAmount(rawAmount) else {
+            throw ImportError.unsupportedFileFormat
+        }
+
+        let counterpartPath = value(["CounterpartPath"]) ?? ""
+        let categoryPath = value(["CategoryPath"]) ?? ""
+        let counterpartAmount = value(["CounterpartAmount"]).flatMap(parseAmount)
+        let counterpartCurrency = value(["CounterpartCurrency"]) ?? currency
+        let counterpartOpeningBalance = value(["CounterpartOpeningBalance"]).flatMap(parseAmount)
+        let counterpartClass = value(["CounterpartClass"])
+        let counterpartSubtype = value(["CounterpartSubtype"])
+
+        let state = normalizedState(rawStatus)
+        let description = value(["Description"])
+        let memo = value(["Memo"])
+        let kind: ParsedImportTransaction.Kind
+        let finalCounterpartPath: String
+        let finalCounterpartAmount: Double
+        let finalCounterpartCurrency: String
+        var accountDefinitions: [MoneydanceAccountDefinition] = [accountDefinition]
+
+        switch normalizedType {
+        case "income":
+            kind = .income
+            finalCounterpartPath = categoryPath
+            finalCounterpartAmount = abs(amount)
+            finalCounterpartCurrency = currency
+            accountDefinitions.append(
+                MoneydanceAccountDefinition(
+                    path: categoryPath,
+                    type: "INCOME",
+                    currency: currency,
+                    openingBalance: nil
+                )
+            )
+        case "expense":
+            kind = .expense
+            finalCounterpartPath = categoryPath
+            finalCounterpartAmount = abs(amount)
+            finalCounterpartCurrency = currency
+            accountDefinitions.append(
+                MoneydanceAccountDefinition(
+                    path: categoryPath,
+                    type: "EXPENSE",
+                    currency: currency,
+                    openingBalance: nil
+                )
+            )
+        case "transfer_same_currency":
+            kind = .sameCurrencyTransfer
+            finalCounterpartPath = counterpartPath
+            finalCounterpartAmount = counterpartAmount ?? -amount
+            finalCounterpartCurrency = counterpartCurrency
+            accountDefinitions.append(
+                MoneydanceAccountDefinition(
+                    path: counterpartPath,
+                    type: definitionType(forAccountClass: counterpartClass, subtype: counterpartSubtype, path: counterpartPath),
+                    currency: counterpartCurrency,
+                    openingBalance: counterpartOpeningBalance
+                )
+            )
+        case "transfer_cross_currency":
+            kind = .crossCurrencyTransfer
+            finalCounterpartPath = counterpartPath
+            finalCounterpartAmount = counterpartAmount ?? -amount
+            finalCounterpartCurrency = counterpartCurrency
+            accountDefinitions.append(
+                MoneydanceAccountDefinition(
+                    path: counterpartPath,
+                    type: definitionType(forAccountClass: counterpartClass, subtype: counterpartSubtype, path: counterpartPath),
+                    currency: counterpartCurrency,
+                    openingBalance: counterpartOpeningBalance
+                )
+            )
+        default:
+            throw ImportError.unsupportedFileFormat
+        }
+
+        return (
+            ParsedImportTransaction(
+                occurrenceDate: date,
+                enteredTimestamp: nil,
+                description: description,
+                memo: memo,
+                state: state,
+                statusWarningFlag: false,
+                statusWarningReason: nil,
+                accountPath: accountPath,
+                accountAmount: amount,
+                counterpartPath: finalCounterpartPath,
+                counterpartAmount: finalCounterpartAmount,
+                kind: kind,
+                usedFallbackClassification: false,
+                accountCurrency: currency,
+                counterpartCurrency: finalCounterpartCurrency,
+                lineNumbers: []
+            ),
+            accountDefinitions.filter { !$0.path.isEmpty }
+        )
+    }
+
+    private func split(_ line: String) -> [String] {
+        var result: [String] = []
+        var current = ""
+        var inQuotes = false
+        let delimiter = options.delimiter.delimiter
+        var iterator = line.makeIterator()
+
+        while let character = iterator.next() {
+            if character == "\"" {
+                if inQuotes, let next = iterator.next() {
+                    if next == "\"" {
+                        current.append("\"")
+                    } else {
+                        inQuotes = false
+                        if next == delimiter {
+                            result.append(current)
+                            current = ""
+                        } else {
+                            current.append(next)
+                        }
+                    }
+                } else {
+                    inQuotes = false
+                }
+                continue
+            }
+
+            if character == delimiter && !inQuotes {
+                result.append(current)
+                current = ""
+            } else {
+                if character == "\"" && current.isEmpty {
+                    inQuotes = true
+                } else {
+                    current.append(character)
+                }
+            }
+        }
+
+        result.append(current)
+        return result
+    }
+
+    private func headerIndex(in header: [String], aliases: [String]) -> Int? {
+        header.firstIndex { value in
+            aliases.contains { alias in
+                value.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(alias) == .orderedSame
+            }
+        }
+    }
+
+    private func parseAmount(_ token: String) -> Double? {
+        let normalized = token.replacingOccurrences(
+            of: String(options.decimalSeparator.character),
+            with: "."
+        )
+        return Double(normalized)
+    }
+
+    private func normalizedState(_ value: String) -> String {
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "pending", "reconciling":
+            return "reconciling"
+        case "cleared":
+            return "cleared"
+        default:
+            return "uncleared"
+        }
+    }
+
+    private func definitionType(forAccountClass accountClass: String?, subtype: String?, path: String) -> String? {
+        guard let accountClass else {
+            return inferredDefinitionType(from: path)
+        }
+
+        switch (accountClass, subtype ?? "") {
+        case ("asset", "cash"):
+            return "CASH"
+        case ("asset", "investment"):
+            return "INVESTMENT"
+        case ("asset", "pension"):
+            return "PENSION"
+        case ("asset", "receivable"):
+            return "RECEIVABLE"
+        case ("asset", "custodial"):
+            return "CUSTODIAL"
+        case ("asset", _):
+            return "BANK"
+        case ("liability", "credit"):
+            return "CREDIT_CARD"
+        case ("liability", _):
+            return "LIABILITY"
+        case ("income", _):
+            return "INCOME"
+        case ("expense", _):
+            return "EXPENSE"
+        default:
+            return inferredDefinitionType(from: path)
+        }
+    }
+
+    private func inferredDefinitionType(from path: String) -> String? {
+        let lowercased = path.lowercased()
+
+        if lowercased.hasPrefix("kp") {
+            return "CASH"
+        }
+        if lowercased.contains("befektetések") {
+            return "INVESTMENT"
+        }
+        if lowercased.contains("credit") {
+            return "CREDIT_CARD"
+        }
+        return "BANK"
+    }
 }
 
 private struct MoneydanceImportParser {
@@ -1228,7 +1670,7 @@ private struct MoneydanceImportParser {
         }
 
         return ParsedImportFile(
-            format: delimiter == "\t" ? .moneydanceTab : .delimitedText,
+            format: .moneydanceTab,
             delimiter: delimiter,
             sourceAccountPath: accountDefinitions.first?.path,
             sourceAccountCurrency: accountDefinitions.first?.currency,
@@ -1351,6 +1793,7 @@ private struct MoneydanceImportParser {
     ) throws -> [ParsedImportTransaction] {
         let definitionByPath = Dictionary(uniqueKeysWithValues: accountDefinitions.map { ($0.path, $0) })
         let postableRealAccountPaths = makePostableRealAccountPaths(from: accountDefinitions)
+        let declaredCategoryClassByPath = makeDeclaredCategoryClassByPath(from: accountDefinitions)
         var parsed: [ParsedImportTransaction] = []
 
         for group in groups {
@@ -1387,11 +1830,16 @@ private struct MoneydanceImportParser {
 
             let mainIsRealAccount = postableRealAccountPaths.contains(mainPath)
             let counterpartIsRealAccount = postableRealAccountPaths.contains(counterpartPath)
+            let declaredCategoryClass = resolveDeclaredCategoryClass(
+                for: counterpartPath,
+                declaredCategoryClassByPath: declaredCategoryClassByPath
+            )
 
-            // Moneydance exports the same logical transaction from category-side ledgers as well.
-            // Treat the first row as authoritative and skip mirrored blocks where the first row is
-            // not a real account path but the continuation row is.
-            if !mainIsRealAccount && counterpartIsRealAccount {
+            // Import v1 treats line 1 as the authoritative current account row.
+            // Only real leaf/postable accounts may be current accounts. This skips
+            // category-side mirrored exports entirely and prevents source-account /
+            // memo fallbacks from turning them into bogus income rows.
+            if !mainIsRealAccount {
                 continue
             }
 
@@ -1400,12 +1848,22 @@ private struct MoneydanceImportParser {
             let counterpartCurrency = definitionByPath[counterpartPath]?.currency ?? inferCurrency(from: counterpartPath)
 
             let kind: ParsedImportTransaction.Kind
+            let usedFallbackClassification: Bool
             if counterpartIsRealAccount {
                 kind = mainCurrency == counterpartCurrency ? .sameCurrencyTransfer : .crossCurrencyTransfer
+                usedFallbackClassification = false
+            } else if declaredCategoryClass == "expense" {
+                kind = .expense
+                usedFallbackClassification = false
+            } else if declaredCategoryClass == "income" {
+                kind = .income
+                usedFallbackClassification = false
             } else if mainAmount < 0 {
                 kind = .expense
+                usedFallbackClassification = true
             } else {
                 kind = .income
+                usedFallbackClassification = true
             }
 
             let description = normalized(mainRow.description) ?? normalized(continuationRow.description)
@@ -1434,6 +1892,7 @@ private struct MoneydanceImportParser {
                     counterpartPath: counterpartPath,
                     counterpartAmount: counterpartAmount,
                     kind: kind,
+                    usedFallbackClassification: usedFallbackClassification,
                     accountCurrency: mainCurrency,
                     counterpartCurrency: counterpartCurrency,
                     lineNumbers: [mainRow.lineNumber, continuationRow.lineNumber]
@@ -1454,6 +1913,40 @@ private struct MoneydanceImportParser {
         )
         let structuralRealAccountPaths = structuralPathsForParser(from: realAccountPaths)
         return realAccountPaths.subtracting(structuralRealAccountPaths)
+    }
+
+    private func makeDeclaredCategoryClassByPath(
+        from accountDefinitions: [MoneydanceAccountDefinition]
+    ) -> [String: String] {
+        Dictionary(
+            uniqueKeysWithValues: accountDefinitions.compactMap { definition in
+                switch normalizedMoneydanceAccountType(definition.type) {
+                case "INCOME":
+                    return (definition.path, "income")
+                case "EXPENSE":
+                    return (definition.path, "expense")
+                default:
+                    return nil
+                }
+            }
+        )
+    }
+
+    private func resolveDeclaredCategoryClass(
+        for path: String,
+        declaredCategoryClassByPath: [String: String]
+    ) -> String? {
+        var components = path.split(separator: ":").map(String.init)
+
+        while !components.isEmpty {
+            let candidate = components.joined(separator: ":")
+            if let categoryClass = declaredCategoryClassByPath[candidate] {
+                return categoryClass
+            }
+            _ = components.popLast()
+        }
+
+        return nil
     }
 
     private func isRealAccountDefinition(_ definition: MoneydanceAccountDefinition) -> Bool {
@@ -1554,6 +2047,7 @@ private struct MoneydanceImportParser {
             counterpartPath: preferred.counterpartPath,
             counterpartAmount: preferred.counterpartAmount,
             kind: preferred.kind,
+            usedFallbackClassification: preferred.usedFallbackClassification && other.usedFallbackClassification,
             accountCurrency: preferred.accountCurrency,
             counterpartCurrency: preferred.counterpartCurrency,
             lineNumbers: Array(Set(existing.lineNumbers + incoming.lineNumbers)).sorted()

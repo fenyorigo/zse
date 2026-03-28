@@ -77,6 +77,10 @@ public struct ZseCommands: Commands {
                 NotificationCenter.default.post(name: .openImportTransactionsSheet, object: nil)
             }
 
+            Button("Export Transactions...") {
+                NotificationCenter.default.post(name: .openExportTransactionsSheet, object: nil)
+            }
+
             Button("New Recurring Transaction") {
                 NotificationCenter.default.post(name: .openNewRecurringSheet, object: nil)
             }

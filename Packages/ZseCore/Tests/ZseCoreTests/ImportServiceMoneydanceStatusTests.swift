@@ -384,6 +384,33 @@ struct ImportServiceMoneydanceStatusTests {
     }
 
     @Test
+    func identicalZseFlatTransfersRemainSeparateOnCleanImport() throws {
+        let harness = try ImportHarness()
+        defer { harness.cleanup() }
+
+        let fileURL = try harness.makeIdenticalZseFlatTransferImportFile()
+        let parsedFile = try harness.importService.parseFile(
+            at: fileURL,
+            format: .zse,
+            zseOptions: ZseFlatFileOptions()
+        )
+
+        #expect(parsedFile.transactions.count == 2, "Expected zse flat parser to preserve both transfer rows")
+
+        let result = try harness.importService.commitImport(parsedFile)
+        #expect(result.importedTransactionCount == 2, "Expected zse flat import not to deduplicate identical transfers on a clean import")
+
+        let persistedRows = try harness.databaseManager.dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM transactions WHERE txn_date = '2026-01-07'"
+            )
+        }
+
+        #expect(persistedRows == 2, "Expected both zse flat transfer rows to be stored")
+    }
+
+    @Test
     func creditCardReimbursementImportsAsTransferAndAppearsOnCardLedger() throws {
         let harness = try ImportHarness()
         defer { harness.cleanup() }
@@ -432,6 +459,162 @@ struct ImportServiceMoneydanceStatusTests {
 
         #expect(persistedRows.count == 1, "Expected stored expense transaction to exist")
         #expect(persistedRows.first?["state"] as String? == "cleared", "Expected stored expense to keep cleared status")
+    }
+
+    @Test
+    func validCategoryPathWinsOverMemoAndSourceAccountDuringImport() throws {
+        let harness = try ImportHarness()
+        defer { harness.cleanup() }
+
+        let fileURL = try harness.makeUtilityCategoryPriorityImportFile()
+        let parsedFile = try harness.importService.parseFile(at: fileURL)
+
+        #expect(parsedFile.transactions.count == 1, "Expected one utility expense transaction to parse")
+        #expect(parsedFile.transactions[0].kind == .expense, "Expected valid category counterpart to classify as expense")
+        #expect(parsedFile.transactions[0].usedFallbackClassification == false, "Expected declared category path not to use fallback classification")
+        #expect(parsedFile.transactions[0].accountPath == "Erste:HUF:Peter Erste HUF", "Expected source account path to stay on the bank account")
+        #expect(parsedFile.transactions[0].counterpartPath == "Közművek:Víz, csatorna", "Expected line 2 field 7 category path to win")
+        #expect(parsedFile.transactions[0].description == "Víz és csatornadíj", "Expected description to remain intact")
+
+        let result = try harness.importService.commitImport(parsedFile)
+        #expect(result.importedTransactionCount == 1, "Expected the utility expense to import")
+        #expect(result.expenseCount == 1, "Expected the imported transaction to be booked as expense")
+        #expect(result.incomeCount == 0, "Expected no income booking for the utility expense")
+
+        let sourceAccountID = try harness.databaseManager.dbQueue.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: "SELECT id FROM accounts WHERE name = 'Peter Erste HUF' LIMIT 1"
+            )
+        }
+        let sourceAccountID = try #require(sourceAccountID)
+        let createdCategoryPathCount = try harness.databaseManager.dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: """
+                SELECT COUNT(*)
+                FROM accounts AS leaf
+                LEFT JOIN accounts AS parent ON parent.id = leaf.parent_id
+                WHERE leaf.name = 'Víz, csatorna'
+                  AND parent.name = 'Közművek'
+                """
+            )
+        }
+        #expect(createdCategoryPathCount == 1, "Expected full category path 'Közművek:Víz, csatorna' to be created")
+
+        let sourceLedgerItems = try harness.transactionRepository.fetchTransactions(forAccountID: sourceAccountID)
+        #expect(sourceLedgerItems.count == 1, "Expected exactly one source-account ledger transaction")
+        #expect(sourceLedgerItems[0].description == "Víz és csatornadíj", "Expected stored description to match import text")
+        #expect(sourceLedgerItems[0].outAmount == 12345, "Expected source bank account to carry the expense outflow")
+        #expect(sourceLedgerItems[0].categoryName == "Víz, csatorna", "Expected valid category path to remain the counterpart")
+    }
+
+    @Test
+    func declaredExpenseSubtreeRemainsExpenseDuringImport() throws {
+        let harness = try ImportHarness()
+        defer { harness.cleanup() }
+
+        let fileURL = try harness.makeUtilityCategoryPriorityImportFile()
+        let parsedFile = try harness.importService.parseFile(at: fileURL)
+        _ = try harness.importService.commitImport(parsedFile)
+
+        let categoryClasses = try harness.databaseManager.dbQueue.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT child.name AS name, child.class AS class
+                FROM accounts AS child
+                LEFT JOIN accounts AS parent ON parent.id = child.parent_id
+                WHERE (child.name = 'Közművek' AND child.parent_id IS NULL)
+                   OR (child.name = 'Víz, csatorna' AND parent.name = 'Közművek')
+                ORDER BY child.name
+                """
+            )
+        }
+
+        #expect(categoryClasses.count == 2, "Expected both parent and child utility categories to exist")
+        for row in categoryClasses {
+            #expect(row["class"] as String? == "expense", "Expected declared Közművek subtree to remain expense")
+        }
+    }
+
+    @Test
+    func expenseCategoryCanReceivePositiveRefund() throws {
+        let harness = try ImportHarness()
+        defer { harness.cleanup() }
+
+        let fileURL = try harness.makeExpenseRefundImportFile()
+        let parsedFile = try harness.importService.parseFile(at: fileURL)
+
+        #expect(parsedFile.transactions.count == 1, "Expected one refund transaction to parse")
+        #expect(parsedFile.transactions[0].kind == .expense, "Expected refund in expense subtree to remain an expense-category transaction")
+        #expect(parsedFile.transactions[0].accountAmount == 2500, "Expected source account refund amount to stay positive")
+
+        let result = try harness.importService.commitImport(parsedFile)
+        #expect(result.importedTransactionCount == 1, "Expected expense refund to import")
+        #expect(result.expenseCount == 1, "Expected expense refund to stay in expense classification")
+        #expect(result.incomeCount == 0, "Expected expense refund not to be reclassified as income")
+
+        let sourceAccountID = try harness.databaseManager.dbQueue.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: "SELECT id FROM accounts WHERE name = 'Peter Erste HUF' LIMIT 1"
+            )
+        }
+        let sourceAccountID = try #require(sourceAccountID)
+        let sourceLedgerItems = try harness.transactionRepository.fetchTransactions(forAccountID: sourceAccountID)
+        #expect(sourceLedgerItems.count == 1, "Expected one source-account refund row")
+        #expect(sourceLedgerItems[0].inAmount == 2500, "Expected expense refund to increase the source account")
+        #expect(sourceLedgerItems[0].categoryName == "Víz, csatorna", "Expected refund to stay under the expense category")
+    }
+
+    @Test
+    func incomeCategoryCanReceiveNegativeCorrection() throws {
+        let harness = try ImportHarness()
+        defer { harness.cleanup() }
+
+        let fileURL = try harness.makeIncomeCorrectionImportFile()
+        let parsedFile = try harness.importService.parseFile(at: fileURL)
+
+        #expect(parsedFile.transactions.count == 1, "Expected one income correction transaction to parse")
+        #expect(parsedFile.transactions[0].kind == .income, "Expected declared income subtree to remain income even for negative correction")
+        #expect(parsedFile.transactions[0].accountAmount == -3200, "Expected source account correction amount to stay negative")
+
+        let result = try harness.importService.commitImport(parsedFile)
+        #expect(result.importedTransactionCount == 1, "Expected income correction to import")
+        #expect(result.incomeCount == 1, "Expected correction to stay in income classification")
+        #expect(result.expenseCount == 0, "Expected income correction not to be reclassified as expense")
+
+        let sourceAccountID = try harness.databaseManager.dbQueue.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: "SELECT id FROM accounts WHERE name = 'Peter Erste HUF' LIMIT 1"
+            )
+        }
+        let sourceAccountID = try #require(sourceAccountID)
+        let sourceLedgerItems = try harness.transactionRepository.fetchTransactions(forAccountID: sourceAccountID)
+        #expect(sourceLedgerItems.count == 1, "Expected one source-account correction row")
+        #expect(sourceLedgerItems[0].outAmount == 3200, "Expected negative income correction to reduce the source account")
+        #expect(sourceLedgerItems[0].categoryName == "Salary", "Expected correction to stay under the income category")
+    }
+
+    @Test
+    func categorySideMirrorWithoutDeclaredCategoryDefinitionIsSkipped() throws {
+        let harness = try ImportHarness()
+        defer { harness.cleanup() }
+
+        let fileURL = try harness.makeUndeclaredCategoryMirrorImportFile()
+        let parsedFile = try harness.importService.parseFile(at: fileURL)
+
+        #expect(parsedFile.transactions.count == 1, "Expected only the real-account-side block to survive parsing")
+        #expect(parsedFile.transactions[0].kind == .expense, "Expected surviving block to remain an expense")
+        #expect(parsedFile.transactions[0].accountPath == "Erste:HUF:Peter Erste HUF", "Expected real account to remain the current account")
+        #expect(parsedFile.transactions[0].counterpartPath == "Közművek:Víz, csatorna", "Expected category path to remain the counterpart")
+
+        let result = try harness.importService.commitImport(parsedFile)
+        #expect(result.importedTransactionCount == 1, "Expected mirrored undeclared category export not to duplicate or invert the transaction")
+        #expect(result.expenseCount == 1, "Expected imported transaction to stay an expense")
+        #expect(result.incomeCount == 0, "Expected mirrored undeclared category export not to create income")
     }
 
     @Test
@@ -736,6 +919,17 @@ private final class ImportHarness {
         return fileURL
     }
 
+    func makeIdenticalZseFlatTransferImportFile() throws -> URL {
+        let fileURL = tempDirectoryURL.appendingPathComponent("\(UUID().uuidString)-zse-flat-identical-transfer.txt")
+        let contents = """
+        Date\tStatus\tType\tAccountPath\tCounterpartPath\tCategoryPath\tDescription\tMemo\tAmount\tCurrency\tAccountOpeningBalance\tCounterpartAmount\tCounterpartCurrency\tCounterpartOpeningBalance\tAccountClass\tAccountSubtype\tCounterpartClass\tCounterpartSubtype
+        2026-01-07\tcleared\ttransfer_same_currency\tErste:HUF:Peter Erste HUF\tKP:HUF:Nóra\t\t\t\t-10000\tHUF\t4843441\t10000\tHUF\t0\tasset\tbank\tasset\tcash
+        2026-01-07\tcleared\ttransfer_same_currency\tErste:HUF:Peter Erste HUF\tKP:HUF:Nóra\t\t\t\t-10000\tHUF\t4843441\t10000\tHUF\t0\tasset\tbank\tasset\tcash
+        """
+        try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+        return fileURL
+    }
+
     func makeCategoryDefinedExpenseImportFile() throws -> URL {
         let fileURL = tempDirectoryURL.appendingPathComponent("\(UUID().uuidString)-category-defined-expense.txt")
         let contents = """
@@ -745,6 +939,63 @@ private final class ImportHarness {
         #Date\tTax Date\tDate Entered\tCheck Number\tDescription\tStatus\tAccount\tMemo\tAmount
         2025.10.17\t2025.10.17\t2025.10.17 09:00:00:000\t\tVeronika\tX\tErste:HUF:Peter Erste HUF\t\t-15000
         -\t-\t-\t-\t-\tX\tGyerekek, oktatás\tVeronika\t-15000
+        """
+        try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+        return fileURL
+    }
+
+    func makeUtilityCategoryPriorityImportFile() throws -> URL {
+        let fileURL = tempDirectoryURL.appendingPathComponent("\(UUID().uuidString)-utility-category-priority.txt")
+        let contents = """
+        #Account\tAccount ID\tAccount Type\tCurrency\tStart Balance
+        Erste:HUF:Peter Erste HUF\tbank-1\tBANK\tHUF\t4843441
+        Közművek:Víz, csatorna\texpense-1\tEXPENSE\tHUF\t0
+        #Date\tTax Date\tDate Entered\tCheck Number\tDescription\tStatus\tAccount\tMemo\tAmount
+        2025.10.22\t2025.10.22\t2025.10.22 09:15:00:000\t\tVíz és csatornadíj\tX\tErste:HUF:Peter Erste HUF\t\t-12345
+        -\t-\t-\t-\t-\tX\tKözművek:Víz, csatorna\tVíz és csatornadíj\t-12345
+        """
+        try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+        return fileURL
+    }
+
+    func makeExpenseRefundImportFile() throws -> URL {
+        let fileURL = tempDirectoryURL.appendingPathComponent("\(UUID().uuidString)-expense-refund.txt")
+        let contents = """
+        #Account\tAccount ID\tAccount Type\tCurrency\tStart Balance
+        Erste:HUF:Peter Erste HUF\tbank-1\tBANK\tHUF\t4843441
+        Közművek:Víz, csatorna\texpense-1\tEXPENSE\tHUF\t0
+        #Date\tTax Date\tDate Entered\tCheck Number\tDescription\tStatus\tAccount\tMemo\tAmount
+        2025.10.23\t2025.10.23\t2025.10.23 09:15:00:000\t\tVízdíj visszatérítés\tX\tErste:HUF:Peter Erste HUF\t\t2500
+        -\t-\t-\t-\t-\tX\tKözművek:Víz, csatorna\tVízdíj visszatérítés\t2500
+        """
+        try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+        return fileURL
+    }
+
+    func makeIncomeCorrectionImportFile() throws -> URL {
+        let fileURL = tempDirectoryURL.appendingPathComponent("\(UUID().uuidString)-income-correction.txt")
+        let contents = """
+        #Account\tAccount ID\tAccount Type\tCurrency\tStart Balance
+        Erste:HUF:Peter Erste HUF\tbank-1\tBANK\tHUF\t4843441
+        Salary\tincome-1\tINCOME\tHUF\t0
+        #Date\tTax Date\tDate Entered\tCheck Number\tDescription\tStatus\tAccount\tMemo\tAmount
+        2025.10.24\t2025.10.24\t2025.10.24 09:15:00:000\t\tSalary correction\tX\tErste:HUF:Peter Erste HUF\t\t-3200
+        -\t-\t-\t-\t-\tX\tSalary\tSalary correction\t-3200
+        """
+        try contents.write(to: fileURL, atomically: true, encoding: .utf8)
+        return fileURL
+    }
+
+    func makeUndeclaredCategoryMirrorImportFile() throws -> URL {
+        let fileURL = tempDirectoryURL.appendingPathComponent("\(UUID().uuidString)-undeclared-category-mirror.txt")
+        let contents = """
+        #Account\tAccount ID\tAccount Type\tCurrency\tStart Balance
+        Erste:HUF:Peter Erste HUF\tbank-1\tBANK\tHUF\t4843441
+        #Date\tTax Date\tDate Entered\tCheck Number\tDescription\tStatus\tAccount\tMemo\tAmount
+        2026.03.09\t2026.03.09\t2025.09.22 15:38:23:453\t\tVíz és csatornadíj\tX\tErste:HUF:Peter Erste HUF\t\t-7726
+        -\t-\t-\t-\t-\tX\tKözművek:Víz, csatorna\tVíz és csatornadíj\t-7726
+        2026.03.09\t2026.03.09\t2025.09.22 15:38:23:453\t\tVíz és csatornadíj\tX\tKözművek:Víz, csatorna\t\t7726
+        -\t-\t-\t-\t-\tX\tPeter Erste HUF\tVíz és csatornadíj\t7726
         """
         try contents.write(to: fileURL, atomically: true, encoding: .utf8)
         return fileURL

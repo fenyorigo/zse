@@ -63,6 +63,7 @@ struct TransactionDetailEntry: Identifiable {
     let id: Int64
     let accountID: Int64
     let accountName: String
+    let accountClass: String
     let amount: Double
     let currency: String
     let partnerName: String?
@@ -85,6 +86,7 @@ private struct TransactionDetailEntryRow: Decodable, FetchableRecord {
     let entryID: Int64
     let accountID: Int64
     let accountName: String
+    let accountClass: String
     let amount: Double
     let currency: String
     let partnerName: String?
@@ -346,6 +348,7 @@ struct TransactionRepository {
                 entries.id AS entryID,
                 accounts.id AS accountID,
                 accounts.name AS accountName,
+                accounts.class AS accountClass,
                 entries.amount AS amount,
                 entries.currency AS currency,
                 partners.name AS partnerName,
@@ -377,16 +380,18 @@ struct TransactionRepository {
             arguments: [transactionID]
         )
 
-        let entries = entryRows.map { row in
-            TransactionDetailEntry(
+        let entries = entryRows.map { row -> TransactionDetailEntry in
+            let isCategoryAccount = row.accountClass == "income" || row.accountClass == "expense"
+            return TransactionDetailEntry(
                 id: row.entryID,
                 accountID: row.accountID,
                 accountName: row.accountName,
+                accountClass: row.accountClass,
                 amount: row.amount,
                 currency: row.currency,
                 partnerName: row.partnerName,
                 memo: row.memo,
-                isStructural: row.isGroup || row.hasChildren
+                isStructural: row.isGroup || (row.hasChildren && !isCategoryAccount)
             )
         }
 

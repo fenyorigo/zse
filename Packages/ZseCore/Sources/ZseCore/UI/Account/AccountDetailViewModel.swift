@@ -289,10 +289,10 @@ final class AccountDetailViewModel: ObservableObject {
                 return nil
             }
 
-            if counterpartAccount.class == "income" && currentEntry.amount > 0 {
+            if counterpartAccount.class == "income" {
                 return .deposit
             }
-            if counterpartAccount.class == "expense" && currentEntry.amount < 0 {
+            if counterpartAccount.class == "expense" {
                 return .spending
             }
 
@@ -516,6 +516,10 @@ final class AccountDetailViewModel: ObservableObject {
 
         if account.isGroup {
             return true
+        }
+
+        if account.class == "income" || account.class == "expense" {
+            return false
         }
 
         do {

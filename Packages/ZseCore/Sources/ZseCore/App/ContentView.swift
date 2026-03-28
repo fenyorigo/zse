@@ -27,6 +27,7 @@ struct ContentView: View {
     @State private var isShowingEditAccountSheet = false
     @State private var isShowingNewTransactionSheet = false
     @State private var isShowingImportTransactionsSheet = false
+    @State private var isShowingExportTransactionsSheet = false
     @State private var isShowingRecurringRuleSheet = false
     @State private var isShowingDeleteAccountConfirmation = false
     @State private var accountDeletionErrorMessage: String?
@@ -114,6 +115,9 @@ struct ContentView: View {
             .sheet(isPresented: $isShowingImportTransactionsSheet) {
                 importTransactionsSheet
             }
+            .sheet(isPresented: $isShowingExportTransactionsSheet) {
+                exportTransactionsSheet
+            }
             .sheet(isPresented: $isShowingRecurringRuleSheet) {
                 recurringRuleSheet
             }
@@ -199,6 +203,9 @@ struct ContentView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: .openImportTransactionsSheet)) { _ in
                 isShowingImportTransactionsSheet = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openExportTransactionsSheet)) { _ in
+                isShowingExportTransactionsSheet = true
             }
             .onReceive(NotificationCenter.default.publisher(for: .openNewRecurringSheet)) { _ in
                 isShowingRecurringRuleSheet = true
@@ -402,6 +409,13 @@ struct ContentView: View {
         ) {
             scheduleReloadContent()
         }
+    }
+
+    private var exportTransactionsSheet: some View {
+        ExportTransactionsSheet(
+            selectedAccount: accountDetailViewModel.currentSelectedAccount
+        )
+        .environmentObject(appState)
     }
 
     private func reloadContent() {

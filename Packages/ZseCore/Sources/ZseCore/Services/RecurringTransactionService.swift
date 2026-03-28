@@ -159,7 +159,7 @@ struct RecurringTransactionService {
 
             let memo = [currentEntry.memo, counterpartEntry.memo].compactMap { $0 }.first
 
-            if counterpartAccount.class == "income" && currentEntry.amount > 0 {
+            if counterpartAccount.class == "income" {
                 return RecurringTransactionTemplate(
                     name: transaction.description ?? "Recurring Income",
                     transactionType: .income,
@@ -175,7 +175,7 @@ struct RecurringTransactionService {
                 )
             }
 
-            if counterpartAccount.class == "expense" && currentEntry.amount < 0 {
+            if counterpartAccount.class == "expense" {
                 return RecurringTransactionTemplate(
                     name: transaction.description ?? "Recurring Expense",
                     transactionType: .expense,
