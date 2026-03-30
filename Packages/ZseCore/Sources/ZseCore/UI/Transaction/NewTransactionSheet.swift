@@ -76,11 +76,13 @@ struct NewTransactionSheet: View {
                 Text(viewModel.currentAccountDisplayName)
             }
 
-            Picker(viewModel.categoryLabel, selection: $viewModel.selectedCategoryAccountID) {
-                ForEach(viewModel.selectedCategoryOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: viewModel.categoryLabel,
+                placeholder: "Type to filter categories",
+                selectedID: $viewModel.selectedCategoryAccountID,
+                options: viewModel.selectedCategoryOptions,
+                displayText: { $0.displayName }
+            )
 
             if viewModel.selectedCategoryOptions.isEmpty {
                 Text("No income categories are available. Create an income leaf account first.")
@@ -92,11 +94,13 @@ struct NewTransactionSheet: View {
                 Text(viewModel.currentAccountDisplayName)
             }
 
-            Picker(viewModel.categoryLabel, selection: $viewModel.selectedCategoryAccountID) {
-                ForEach(viewModel.selectedCategoryOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: viewModel.categoryLabel,
+                placeholder: "Type to filter categories",
+                selectedID: $viewModel.selectedCategoryAccountID,
+                options: viewModel.selectedCategoryOptions,
+                displayText: { $0.displayName }
+            )
 
             if viewModel.selectedCategoryOptions.isEmpty {
                 Text("No expense categories are available. Create an expense leaf account first.")
@@ -104,20 +108,24 @@ struct NewTransactionSheet: View {
                     .foregroundStyle(.secondary)
             }
         case .transfer:
-            Picker("From Account", selection: $viewModel.selectedFromAccountID) {
-                ForEach(viewModel.fromAccountOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: "From Account",
+                placeholder: "Type to filter accounts",
+                selectedID: $viewModel.selectedFromAccountID,
+                options: viewModel.fromAccountOptions,
+                displayText: { $0.displayName }
+            )
             .onChange(of: viewModel.selectedFromAccountID) { _, _ in
                 viewModel.transactionTypeDidChange()
             }
 
-            Picker("To Account", selection: $viewModel.selectedToAccountID) {
-                ForEach(viewModel.toAccountOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: "To Account",
+                placeholder: "Type to filter accounts",
+                selectedID: $viewModel.selectedToAccountID,
+                options: viewModel.toAccountOptions,
+                displayText: { $0.displayName }
+            )
             .onChange(of: viewModel.selectedToAccountID) { _, _ in
                 viewModel.transactionTypeDidChange()
             }

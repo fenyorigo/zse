@@ -69,9 +69,10 @@ final class RecurringRuleEditorViewModel: ObservableObject {
 
     func loadFormData() {
         do {
+            let allAccounts = try accountRepository.getAllAccounts()
             let accounts = try accountRepository.getLeafAccounts()
             let accountsByID = Dictionary(
-                uniqueKeysWithValues: accounts.compactMap { account -> (Int64, Account)? in
+                uniqueKeysWithValues: allAccounts.compactMap { account -> (Int64, Account)? in
                     guard let accountID = account.id else { return nil }
                     return (accountID, account)
                 }

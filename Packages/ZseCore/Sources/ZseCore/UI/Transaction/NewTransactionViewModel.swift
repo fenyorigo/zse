@@ -69,9 +69,10 @@ final class NewTransactionViewModel: ObservableObject {
 
     func loadFormData() {
         do {
+            let allAccounts = try accountRepository.getAllAccounts()
             let accounts = try accountRepository.getLeafAccounts()
             let accountsByID: [Int64: Account] = Dictionary(
-                uniqueKeysWithValues: accounts.compactMap { account in
+                uniqueKeysWithValues: allAccounts.compactMap { account in
                     guard let accountID = account.id else {
                         return nil
                     }

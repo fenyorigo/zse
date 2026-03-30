@@ -29,12 +29,13 @@ struct EditTransactionSheet: View {
                 }
 
                 if viewModel.isCounterpartEditable {
-                    Picker(viewModel.counterpartLabel, selection: $viewModel.selectedCounterpartAccountID) {
-                        Text("None").tag(Optional<Int64>.none)
-                        ForEach(viewModel.counterpartOptions) { option in
-                            Text(option.displayName).tag(Optional(option.id))
-                        }
-                    }
+                    SearchableSelectionField(
+                        title: viewModel.counterpartLabel,
+                        placeholder: "Type to filter options",
+                        selectedID: $viewModel.selectedCounterpartAccountID,
+                        options: viewModel.counterpartOptions,
+                        displayText: { $0.displayName }
+                    )
                     .onChange(of: viewModel.selectedCounterpartAccountID) { _, _ in
                         viewModel.counterpartDidChange()
                     }

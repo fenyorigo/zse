@@ -104,41 +104,53 @@ struct RecurringRuleEditorSheet: View {
     private var typeSpecificFields: some View {
         switch viewModel.transactionType {
         case .income:
-            Picker("Target Account", selection: $viewModel.selectedTargetAccountID) {
-                ForEach(viewModel.targetAccountOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: "Target Account",
+                placeholder: "Type to filter accounts",
+                selectedID: $viewModel.selectedTargetAccountID,
+                options: viewModel.targetAccountOptions,
+                displayText: { $0.displayName }
+            )
 
-            Picker("Income Category", selection: $viewModel.selectedCategoryAccountID) {
-                ForEach(viewModel.categoryOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: "Income Category",
+                placeholder: "Type to filter categories",
+                selectedID: $viewModel.selectedCategoryAccountID,
+                options: viewModel.categoryOptions,
+                displayText: { $0.displayName }
+            )
         case .expense:
-            Picker("Source Account", selection: $viewModel.selectedSourceAccountID) {
-                ForEach(viewModel.sourceAccountOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: "Source Account",
+                placeholder: "Type to filter accounts",
+                selectedID: $viewModel.selectedSourceAccountID,
+                options: viewModel.sourceAccountOptions,
+                displayText: { $0.displayName }
+            )
 
-            Picker("Expense Category", selection: $viewModel.selectedCategoryAccountID) {
-                ForEach(viewModel.categoryOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: "Expense Category",
+                placeholder: "Type to filter categories",
+                selectedID: $viewModel.selectedCategoryAccountID,
+                options: viewModel.categoryOptions,
+                displayText: { $0.displayName }
+            )
         case .transfer:
-            Picker("Source Account", selection: $viewModel.selectedSourceAccountID) {
-                ForEach(viewModel.sourceAccountOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: "Source Account",
+                placeholder: "Type to filter accounts",
+                selectedID: $viewModel.selectedSourceAccountID,
+                options: viewModel.sourceAccountOptions,
+                displayText: { $0.displayName }
+            )
 
-            Picker("Target Account", selection: $viewModel.selectedTargetAccountID) {
-                ForEach(viewModel.targetAccountOptions) { option in
-                    Text(option.displayName).tag(Optional(option.id))
-                }
-            }
+            SearchableSelectionField(
+                title: "Target Account",
+                placeholder: "Type to filter accounts",
+                selectedID: $viewModel.selectedTargetAccountID,
+                options: viewModel.targetAccountOptions,
+                displayText: { $0.displayName }
+            )
         }
     }
 
