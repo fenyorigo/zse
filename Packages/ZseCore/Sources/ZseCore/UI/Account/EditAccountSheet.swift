@@ -53,6 +53,7 @@ struct EditAccountSheet: View {
 
                 if viewModel.isCreditLimitEditable {
                     TextField("Credit Limit (HUF)", text: $viewModel.creditLimitText)
+                    TextField("Remaining Warning Threshold (%)", text: $viewModel.creditAvailabilityWarningPercentText)
                 }
 
                 Toggle("Is Group", isOn: $viewModel.isGroup)

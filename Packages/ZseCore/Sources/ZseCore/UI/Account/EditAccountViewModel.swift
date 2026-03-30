@@ -32,6 +32,7 @@ final class EditAccountViewModel: ObservableObject {
     @Published var includeInNetWorth: Bool
     @Published var accumulationCurrencyCode: String?
     @Published var creditLimitText: String
+    @Published var creditAvailabilityWarningPercentText: String
     @Published var openingBalanceText: String
     @Published var hasOpeningBalanceDate: Bool
     @Published var openingBalanceDate: Date
@@ -65,6 +66,7 @@ final class EditAccountViewModel: ObservableObject {
         self.includeInNetWorth = account.includeInNetWorth
         self.accumulationCurrencyCode = account.accumulationCurrency
         self.creditLimitText = account.creditLimit.map { String($0) } ?? ""
+        self.creditAvailabilityWarningPercentText = account.creditAvailabilityWarningPercent.map { String($0) } ?? ""
         self.openingBalanceText = account.openingBalance.map { String($0) } ?? ""
         self.hasOpeningBalanceDate = account.openingBalanceDate != nil
         self.openingBalanceDate = Self.dateFormatter.date(from: account.openingBalanceDate ?? "") ?? Date()
@@ -134,6 +136,7 @@ final class EditAccountViewModel: ObservableObject {
 
         let openingBalance = try parseOpeningBalance()
         let creditLimit = try parseCreditLimit()
+        let creditAvailabilityWarningPercent = try parseCreditAvailabilityWarningPercent()
         let openingBalanceDateString = hasOpeningBalanceDate
             ? Self.dateFormatter.string(from: openingBalanceDate)
             : nil
@@ -166,6 +169,7 @@ final class EditAccountViewModel: ObservableObject {
         updatedAccount.includeInNetWorth = includeInNetWorth
         updatedAccount.accumulationCurrency = canEditAccumulationCurrency ? accumulationCurrencyCode : nil
         updatedAccount.creditLimit = isCreditLimitEditable ? creditLimit : nil
+        updatedAccount.creditAvailabilityWarningPercent = isCreditLimitEditable ? creditAvailabilityWarningPercent : nil
         updatedAccount.openingBalance = openingBalance
         updatedAccount.openingBalanceDate = openingBalanceDateString
         updatedAccount.sortOrder = Int(sortOrderText) ?? 0
@@ -220,6 +224,26 @@ final class EditAccountViewModel: ObservableObject {
         return creditLimit
     }
 
+    private func parseCreditAvailabilityWarningPercent() throws -> Double? {
+        let trimmed = creditAvailabilityWarningPercentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return nil
+        }
+
+        let normalized = trimmed.replacingOccurrences(of: ",", with: ".")
+        guard let warningPercent = Double(normalized) else {
+            errorMessage = "Warning threshold must be a valid percentage."
+            throw EditAccountError.validationFailed("Warning threshold must be a valid percentage.")
+        }
+
+        guard warningPercent >= 0 else {
+            errorMessage = "Warning threshold must be zero or greater."
+            throw EditAccountError.validationFailed("Warning threshold must be zero or greater.")
+        }
+
+        return warningPercent
+    }
+
     var selectedParentAccount: ParentAccountOption? {
         availableParents.first { $0.id == selectedParentAccountID }
     }
@@ -229,7 +253,7 @@ final class EditAccountViewModel: ObservableObject {
     }
 
     var isCreditLimitEditable: Bool {
-        accountClass == "liability" && subtype == "credit"
+        accountClass == "liability" && Self.creditCardSubtypes.contains(subtype)
     }
 
     func synchronizeCurrencyWithParent() {
@@ -259,6 +283,11 @@ final class EditAccountViewModel: ObservableObject {
 
         return components.reversed().joined(separator: " > ")
     }
+
+    private static let creditCardSubtypes: Set<String> = [
+        "credit",
+        "credit_card"
+    ]
 
     private func isEligibleForAccumulationCurrency() -> Bool {
         guard let accountID = originalAccount.id else {

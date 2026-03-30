@@ -185,6 +185,12 @@ enum Migrations {
             }
         }
 
+        migrator.registerMigration("addAccountCreditAvailabilityWarningPercent") { db in
+            try db.alter(table: "accounts") { table in
+                table.add(column: "credit_availability_warning_percent", .double)
+            }
+        }
+
         migrator.registerMigration("createAppPreferences") { db in
             try db.create(table: "app_preferences") { table in
                 table.column("id", .integer).primaryKey()
@@ -205,6 +211,13 @@ enum Migrations {
                 table.column("transaction_status_filter", .text)
                 table.column("created_at", .text).notNull()
                 table.column("updated_at", .text).notNull()
+            }
+        }
+
+        migrator.registerMigration("addDateFiltersToAccountUIPreferences") { db in
+            try db.alter(table: "account_ui_preferences") { table in
+                table.add(column: "after_date_filter", .text)
+                table.add(column: "before_date_filter", .text)
             }
         }
 

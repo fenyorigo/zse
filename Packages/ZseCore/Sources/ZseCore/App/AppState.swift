@@ -65,6 +65,7 @@ public final class AppState: ObservableObject {
     let zseFlatFileService: ZseFlatFileService
     let fxRateImportService: FxRateImportService
     let rollupValuationService: RollupValuationService
+    let accountBalanceChartService: AccountBalanceChartService
     let databaseMaintenanceService: DatabaseMaintenanceService
     private var activeBackupFolderSecurityScopedURL: URL?
 
@@ -103,6 +104,10 @@ public final class AppState: ObservableObject {
         )
         self.fxRateImportService = FxRateImportService(fxRateRepository: self.fxRateRepository)
         self.rollupValuationService = RollupValuationService(fxRateRepository: self.fxRateRepository)
+        self.accountBalanceChartService = AccountBalanceChartService(
+            databaseManager: databaseManager,
+            accountRepository: self.accountRepository
+        )
         self.databaseMaintenanceService = DatabaseMaintenanceService(
             databaseManager: databaseManager,
             appPreferencesRepository: self.appPreferencesRepository

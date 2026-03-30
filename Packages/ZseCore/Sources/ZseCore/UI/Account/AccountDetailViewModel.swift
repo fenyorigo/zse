@@ -118,6 +118,17 @@ final class AccountDetailViewModel: ObservableObject {
         return account
     }
 
+    var currentDisplayedAccount: Account? {
+        switch state {
+        case .postable(let account, _), .nonPostable(let account):
+            return account
+        case .failed(let account, _):
+            return account
+        default:
+            return nil
+        }
+    }
+
     var currentPostableTransactions: [TransactionListItem] {
         guard case let .postable(_, transactions) = state else {
             return []

@@ -1,6 +1,28 @@
 import SwiftUI
 
 struct AccountDetailView: View {
+    private enum BalanceChartState {
+        case hidden
+        case unavailable(String)
+        case ready(AccountBalanceChartService.Presentation)
+    }
+
+    private enum ContentDisplayMode: String, CaseIterable, Identifiable {
+        case list
+        case chart
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .list:
+                return "List"
+            case .chart:
+                return "Chart"
+            }
+        }
+    }
+
     private enum TransactionStatusFilter: String, CaseIterable, Identifiable {
         case all
         case clearedOnly
@@ -29,12 +51,47 @@ struct AccountDetailView: View {
         var selectedCategoryName = "__all_categories__"
         var searchText = ""
         var includeProjectedRecurring = true
+        var afterDate = Self.defaultAfterDate
+        var beforeDate = Self.defaultBeforeDate
+
+        private static let defaultAfterDate: Date = {
+            var components = DateComponents()
+            components.calendar = Calendar(identifier: .gregorian)
+            components.timeZone = TimeZone(secondsFromGMT: 0)
+            components.year = 1960
+            components.month = 1
+            components.day = 1
+            return components.date ?? Date.distantPast
+        }()
+
+        private static let defaultBeforeDate: Date = {
+            var components = DateComponents()
+            components.calendar = Calendar(identifier: .gregorian)
+            components.timeZone = TimeZone(secondsFromGMT: 0)
+            components.year = 2100
+            components.month = 12
+            components.day = 31
+            return components.date ?? Date.distantFuture
+        }()
     }
 
     private struct CreditCardAvailabilitySummary {
         let creditLimit: Double?
+        let creditAvailabilityWarningPercent: Double?
         let availableBeforeNextReimbursement: Double?
         let nextReimbursementDate: String?
+
+        var isBelowWarningThreshold: Bool {
+            guard let creditLimit,
+                  creditLimit > 0,
+                  let creditAvailabilityWarningPercent,
+                  creditAvailabilityWarningPercent > 0,
+                  let availableBeforeNextReimbursement else {
+                return false
+            }
+
+            return availableBeforeNextReimbursement < creditLimit * (creditAvailabilityWarningPercent / 100)
+        }
     }
 
     @EnvironmentObject private var appState: AppState
@@ -56,6 +113,12 @@ struct AccountDetailView: View {
     @State private var selectedCategoryName: String = Self.allCategoriesFilterValue
     @State private var searchText = ""
     @State private var includeProjectedRecurring = true
+    @State private var afterDate = Self.defaultAfterFilterDate
+    @State private var beforeDate = Self.defaultBeforeFilterDate
+    @State private var afterDateText = Self.filterDateFormatter.string(from: Self.defaultAfterFilterDate)
+    @State private var beforeDateText = Self.filterDateFormatter.string(from: Self.defaultBeforeFilterDate)
+    @State private var balanceChartState: BalanceChartState = .hidden
+    @State private var contentDisplayMode: ContentDisplayMode = .list
     @FocusState private var inlineAmountFieldFocused: Bool
     let onEditAccount: () -> Void
     let onDeleteAccount: () -> Void
@@ -203,18 +266,45 @@ struct AccountDetailView: View {
                 .font(.title3)
                 .fontWeight(.semibold)
 
+            compactChartFilterBar()
+                .frame(maxWidth: 860, alignment: .leading)
+
+            metadataSection(for: account)
+                .frame(maxWidth: 420)
+
+            balanceChartSection
+                .frame(maxWidth: 860)
+
             Text("This is a grouping node. Select a lowest-level account to view transactions.")
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
-                .frame(maxWidth: 420)
-
-            metadataSection(for: account)
                 .frame(maxWidth: 420)
 
             accountActions
                 .frame(maxWidth: 420, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            loadFilterState(for: account.id)
+            refreshBalanceChart(for: account)
+        }
+        .onChange(of: account.id) { _, _ in
+            resetFilters(persist: false)
+            loadFilterState(for: account.id)
+            refreshBalanceChart(for: account)
+        }
+        .onChange(of: statusFilter) { _, _ in
+            storeCurrentFilterState()
+            refreshBalanceChart(for: account)
+        }
+        .onChange(of: afterDate) { _, _ in
+            storeCurrentFilterState()
+            refreshBalanceChart(for: account)
+        }
+        .onChange(of: beforeDate) { _, _ in
+            storeCurrentFilterState()
+            refreshBalanceChart(for: account)
+        }
     }
 
     private func postableAccountView(account: Account, transactions: [TransactionListItem]) -> some View {
@@ -267,7 +357,12 @@ struct AccountDetailView: View {
             filterBar(for: account, transactions: transactions)
 
             Group {
-                if filteredTransactions(transactions).isEmpty {
+                if contentDisplayMode == .chart {
+                    balanceChartSection
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                } else if filteredTransactions(transactions).isEmpty {
                     ContentUnavailableView(
                         transactions.isEmpty ? "No transactions for this account yet." : "No transactions match the current filters.",
                         systemImage: "list.bullet.rectangle",
@@ -333,6 +428,7 @@ struct AccountDetailView: View {
                     }
                     .onChange(of: statusFilter) { _, _ in
                         storeCurrentFilterState()
+                        refreshBalanceChart(for: account)
                         deferVisibleSelectionSync(transactions)
                     }
                     .onChange(of: selectedPartnerName) { _, _ in
@@ -351,15 +447,28 @@ struct AccountDetailView: View {
                         storeCurrentFilterState()
                         deferVisibleSelectionSync(transactions)
                     }
+                    .onChange(of: afterDate) { _, _ in
+                        storeCurrentFilterState()
+                        refreshBalanceChart(for: account)
+                        deferVisibleSelectionSync(transactions)
+                    }
+                    .onChange(of: beforeDate) { _, _ in
+                        storeCurrentFilterState()
+                        refreshBalanceChart(for: account)
+                        deferVisibleSelectionSync(transactions)
+                    }
                     .onChange(of: transactions.map(\.id)) { _, _ in
+                        refreshBalanceChart(for: account)
                         deferVisibleSelectionSync(transactions)
                     }
                 }
             }
             .onAppear {
                 loadFilterState(for: account.id)
+                refreshBalanceChart(for: account)
                 selectedTransactionIDs = selectionSet(from: viewModel.selectedTransactionID)
                 transactionSortOrder = Self.defaultTransactionSortOrder
+                contentDisplayMode = .list
             }
             .onChange(of: account.id) { _, _ in
                 finishInlineEditing(commit: false)
@@ -368,6 +477,8 @@ struct AccountDetailView: View {
                 transactionSortOrder = Self.defaultTransactionSortOrder
                 resetFilters(persist: false)
                 loadFilterState(for: account.id)
+                refreshBalanceChart(for: account)
+                contentDisplayMode = .list
             }
             .onChange(of: viewModel.selectedTransactionID) { _, newValue in
                 let expectedSelection = selectionSet(from: newValue)
@@ -388,10 +499,12 @@ struct AccountDetailView: View {
                         value: displayCreditLimitText(creditCardAvailability.creditLimit)
                     )
                     compactMetricText(
-                        title: "Avail",
+                        title: "Available",
                         value: creditCardAvailability.availableBeforeNextReimbursement.map {
                             formattedAccountMetric($0, currency: "HUF")
-                        } ?? "N/A"
+                        } ?? "N/A",
+                        color: creditCardAvailability.isBelowWarningThreshold ? .orange : nil,
+                        isEmphasized: creditCardAvailability.isBelowWarningThreshold
                     )
                     compactMetricText(
                         title: "Next",
@@ -414,7 +527,7 @@ struct AccountDetailView: View {
         transactions: [TransactionListItem]
     ) -> CreditCardAvailabilitySummary? {
         guard account.class == "liability",
-              account.subtype == "credit" else {
+              Self.creditCardSubtypes.contains(account.subtype) else {
             return nil
         }
 
@@ -441,6 +554,7 @@ struct AccountDetailView: View {
 
         return CreditCardAvailabilitySummary(
             creditLimit: account.creditLimit,
+            creditAvailabilityWarningPercent: account.creditAvailabilityWarningPercent,
             availableBeforeNextReimbursement: availableBeforeNextReimbursement,
             nextReimbursementDate: nextReimbursementDate
         )
@@ -722,6 +836,11 @@ struct AccountDetailView: View {
         }
     }
 
+    private static let creditCardSubtypes: Set<String> = [
+        "credit",
+        "credit_card"
+    ]
+
     @ViewBuilder
     private func descriptionCell(for item: TransactionListItem) -> some View {
         HStack(spacing: 6) {
@@ -904,12 +1023,22 @@ struct AccountDetailView: View {
 
     private func filteredTransactions(_ transactions: [TransactionListItem]) -> [TransactionListItem] {
         transactions.filter { item in
-            matchesProjectedFilter(item)
+            matchesDateFilter(item)
+                && matchesProjectedFilter(item)
                 && matchesStatusFilter(item)
                 && matchesPartnerFilter(item)
                 && matchesCategoryFilter(item)
                 && matchesSearchFilter(item)
         }
+    }
+
+    private func matchesDateFilter(_ item: TransactionListItem) -> Bool {
+        guard afterDate <= beforeDate else {
+            return false
+        }
+
+        return item.txnDate >= Self.filterDateFormatter.string(from: afterDate)
+            && item.txnDate <= Self.filterDateFormatter.string(from: beforeDate)
     }
 
     private func matchesProjectedFilter(_ item: TransactionListItem) -> Bool {
@@ -972,43 +1101,77 @@ struct AccountDetailView: View {
                 .pickerStyle(.menu)
                 .controlSize(.small)
 
-                Picker("Partner", selection: $selectedPartnerName) {
-                    Text("All Partners").tag(Self.allPartnersFilterValue)
-                    ForEach(partnerFilterOptions(for: transactions), id: \.self) { partnerName in
-                        Text(partnerName).tag(partnerName)
+                if !transactions.isEmpty {
+                    Picker("Partner", selection: $selectedPartnerName) {
+                        Text("All Partners").tag(Self.allPartnersFilterValue)
+                        ForEach(partnerFilterOptions(for: transactions), id: \.self) { partnerName in
+                            Text(partnerName).tag(partnerName)
+                        }
                     }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .controlSize(.small)
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
 
-                Picker("Category", selection: $selectedCategoryName) {
-                    Text("All Categories").tag(Self.allCategoriesFilterValue)
-                    ForEach(categoryFilterOptions(for: transactions), id: \.self) { categoryName in
-                        Text(categoryName).tag(categoryName)
+                    Picker("Category", selection: $selectedCategoryName) {
+                        Text("All Categories").tag(Self.allCategoriesFilterValue)
+                        ForEach(categoryFilterOptions(for: transactions), id: \.self) { categoryName in
+                            Text(categoryName).tag(categoryName)
+                        }
                     }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .controlSize(.small)
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .controlSize(.small)
 
-                TextField("Search", text: $searchText)
+                    TextField("Search", text: $searchText)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.small)
+                        .frame(width: 180)
+
+                    Toggle("Projected", isOn: $includeProjectedRecurring)
+                        .toggleStyle(.checkbox)
+                        .controlSize(.small)
+
+                    Picker("Content", selection: $contentDisplayMode) {
+                        ForEach(ContentDisplayMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .controlSize(.small)
+                    .frame(width: 120)
+                }
+
+                Spacer()
+
+                Text("After date")
+                    .foregroundStyle(.secondary)
+                TextField("YYYY-MM-DD", text: $afterDateText)
                     .textFieldStyle(.roundedBorder)
                     .controlSize(.small)
-                    .frame(width: 180)
+                    .frame(width: 110)
+                    .font(.system(.callout, design: .monospaced))
+                    .onChange(of: afterDateText) { _, newValue in
+                        applyAfterDateText(newValue)
+                    }
 
-                Toggle("Projected", isOn: $includeProjectedRecurring)
-                    .toggleStyle(.checkbox)
+                Text("Before date")
+                    .foregroundStyle(.secondary)
+                TextField("YYYY-MM-DD", text: $beforeDateText)
+                    .textFieldStyle(.roundedBorder)
                     .controlSize(.small)
+                    .frame(width: 110)
+                    .font(.system(.callout, design: .monospaced))
+                    .onChange(of: beforeDateText) { _, newValue in
+                        applyBeforeDateText(newValue)
+                    }
 
                 if hasActiveFilters {
-                    Button("Clear") {
+                    Button("Clear all filters") {
                         resetFilters()
                     }
                     .controlSize(.small)
                 }
-
-                Spacer()
             }
 
         }
@@ -1016,10 +1179,55 @@ struct AccountDetailView: View {
         .padding(.bottom, 6)
     }
 
-    private func compactMetricText(title: String, value: String) -> some View {
+    private func compactChartFilterBar() -> some View {
+        filterBar(
+            for: viewModel.currentDisplayedAccount ?? Account(
+                name: "",
+                class: "asset",
+                subtype: "group",
+                currency: "HUF"
+            ),
+            transactions: []
+        )
+    }
+
+    @ViewBuilder
+    private var balanceChartSection: some View {
+        switch balanceChartState {
+        case .hidden:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Balance Chart")
+                    .font(.headline)
+                Text("No relevant subaccounts are available for charting.")
+                    .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        case .unavailable(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Balance Chart")
+                    .font(.headline)
+                Text(message)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(12)
+            .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        case .ready(let presentation):
+            AccountBalanceChartView(presentation: presentation)
+        }
+    }
+
+    private func compactMetricText(
+        title: String,
+        value: String,
+        color: Color? = nil,
+        isEmphasized: Bool = false
+    ) -> some View {
         Text("\(title): \(value)")
             .lineLimit(1)
             .truncationMode(.tail)
+            .fontWeight(isEmphasized ? .bold : .regular)
+            .foregroundStyle(color ?? .secondary)
     }
 
     private func partnerFilterOptions(for transactions: [TransactionListItem]) -> [String] {
@@ -1131,7 +1339,7 @@ struct AccountDetailView: View {
     }
 
     private func storeCurrentFilterState() {
-        guard let accountID = viewModel.currentPostableAccount?.id else {
+        guard let accountID = viewModel.currentDisplayedAccount?.id else {
             return
         }
 
@@ -1140,12 +1348,16 @@ struct AccountDetailView: View {
             selectedPartnerName: selectedPartnerName,
             selectedCategoryName: selectedCategoryName,
             searchText: searchText,
-            includeProjectedRecurring: includeProjectedRecurring
+            includeProjectedRecurring: includeProjectedRecurring,
+            afterDate: afterDate,
+            beforeDate: beforeDate
         )
 
-        try? appState.accountUIPreferenceRepository.saveTransactionStatusFilter(
+        try? appState.accountUIPreferenceRepository.savePreference(
             accountID: accountID,
-            filter: statusFilter.rawValue
+            transactionStatusFilter: statusFilter.rawValue,
+            afterDateFilter: Self.filterDateFormatter.string(from: afterDate),
+            beforeDateFilter: Self.filterDateFormatter.string(from: beforeDate)
         )
     }
 
@@ -1156,14 +1368,18 @@ struct AccountDetailView: View {
             selectedCategoryName = Self.allCategoriesFilterValue
             searchText = ""
             includeProjectedRecurring = true
+            afterDate = Self.defaultAfterFilterDate
+            beforeDate = Self.defaultBeforeFilterDate
+            afterDateText = Self.filterDateFormatter.string(from: Self.defaultAfterFilterDate)
+            beforeDateText = Self.filterDateFormatter.string(from: Self.defaultBeforeFilterDate)
             return
         }
 
         let filterState = filterStateByAccountID[accountID] ?? AccountFilterState()
-        let savedFilter = try? appState.accountUIPreferenceRepository
-            .savedTransactionStatusFilter(accountID: accountID)
+        let savedPreference = try? appState.accountUIPreferenceRepository
+            .savedPreference(accountID: accountID)
 
-        if let savedFilter = savedFilter ?? nil,
+        if let savedFilter = savedPreference?.transactionStatusFilter,
            let persistedStatusFilter = TransactionStatusFilter(rawValue: savedFilter) {
             statusFilter = persistedStatusFilter
         } else {
@@ -1173,6 +1389,14 @@ struct AccountDetailView: View {
         selectedCategoryName = filterState.selectedCategoryName
         searchText = filterState.searchText
         includeProjectedRecurring = filterState.includeProjectedRecurring
+        afterDate = savedPreference?.afterDateFilter.flatMap(Self.filterDateFormatter.date(from:))
+            ?? filterState.afterDate
+        beforeDate = savedPreference?.beforeDateFilter.flatMap(Self.filterDateFormatter.date(from:))
+            ?? filterState.beforeDate
+        afterDateText = Self.filterDateFormatter.string(from: filterState.afterDate)
+        beforeDateText = Self.filterDateFormatter.string(from: filterState.beforeDate)
+        afterDateText = Self.filterDateFormatter.string(from: afterDate)
+        beforeDateText = Self.filterDateFormatter.string(from: beforeDate)
     }
 
     private func syncSelectionWithVisibleTransactions(_ transactions: [TransactionListItem]) {
@@ -1213,8 +1437,70 @@ struct AccountDetailView: View {
         selectedCategoryName = Self.allCategoriesFilterValue
         searchText = ""
         includeProjectedRecurring = true
+        afterDate = Self.defaultAfterFilterDate
+        beforeDate = Self.defaultBeforeFilterDate
+        afterDateText = Self.filterDateFormatter.string(from: Self.defaultAfterFilterDate)
+        beforeDateText = Self.filterDateFormatter.string(from: Self.defaultBeforeFilterDate)
         if persist {
             storeCurrentFilterState()
+        }
+    }
+
+    private func refreshBalanceChart(for account: Account) {
+        do {
+            let result = try appState.accountBalanceChartService.buildChart(
+                rootAccount: account,
+                afterDate: Self.filterDateFormatter.string(from: afterDate),
+                beforeDate: Self.filterDateFormatter.string(from: beforeDate),
+                statusFilter: statusFilter.rawValue
+            )
+
+            switch result {
+            case .hidden:
+                balanceChartState = .hidden
+            case .unavailable(let message):
+                balanceChartState = .unavailable(message)
+            case .ready(let presentation):
+                balanceChartState = .ready(presentation)
+            }
+        } catch {
+            balanceChartState = .unavailable(error.localizedDescription)
+        }
+    }
+
+    private func applyAfterDateText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count == 10 else {
+            return
+        }
+
+        guard let parsedDate = Self.filterDateFormatter.date(from: trimmed) else {
+            afterDateText = Self.filterDateFormatter.string(from: afterDate)
+            return
+        }
+
+        afterDate = parsedDate
+        let normalizedText = Self.filterDateFormatter.string(from: parsedDate)
+        if afterDateText != normalizedText {
+            afterDateText = normalizedText
+        }
+    }
+
+    private func applyBeforeDateText(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count == 10 else {
+            return
+        }
+
+        guard let parsedDate = Self.filterDateFormatter.date(from: trimmed) else {
+            beforeDateText = Self.filterDateFormatter.string(from: beforeDate)
+            return
+        }
+
+        beforeDate = parsedDate
+        let normalizedText = Self.filterDateFormatter.string(from: parsedDate)
+        if beforeDateText != normalizedText {
+            beforeDateText = normalizedText
         }
     }
 
@@ -1224,12 +1510,31 @@ struct AccountDetailView: View {
             || selectedCategoryName != Self.allCategoriesFilterValue
             || !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !includeProjectedRecurring
+            || afterDate != Self.defaultAfterFilterDate
+            || beforeDate != Self.defaultBeforeFilterDate
     }
 
     private static let inlineDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
+    }()
+
+    private static let filterDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static let defaultAfterFilterDate: Date = {
+        filterDateFormatter.date(from: "1960-01-01") ?? Date.distantPast
+    }()
+
+    private static let defaultBeforeFilterDate: Date = {
+        filterDateFormatter.date(from: "2100-12-31") ?? Date.distantFuture
     }()
 
     private static let allPartnersFilterValue = "__all_partners__"

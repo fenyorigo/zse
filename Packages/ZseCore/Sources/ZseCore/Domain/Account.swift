@@ -15,6 +15,7 @@ struct Account: Codable, FetchableRecord, MutablePersistableRecord, Identifiable
     var includeInNetWorth: Bool
     var accumulationCurrency: String?
     var creditLimit: Double?
+    var creditAvailabilityWarningPercent: Double?
     var openingBalance: Double?
     var openingBalanceDate: String?
     var sortOrder: Int
@@ -33,6 +34,7 @@ struct Account: Codable, FetchableRecord, MutablePersistableRecord, Identifiable
         includeInNetWorth: Bool = true,
         accumulationCurrency: String? = nil,
         creditLimit: Double? = nil,
+        creditAvailabilityWarningPercent: Double? = nil,
         openingBalance: Double? = nil,
         openingBalanceDate: String? = nil,
         sortOrder: Int = 0,
@@ -51,6 +53,7 @@ struct Account: Codable, FetchableRecord, MutablePersistableRecord, Identifiable
         self.includeInNetWorth = includeInNetWorth
         self.accumulationCurrency = accumulationCurrency
         self.creditLimit = creditLimit
+        self.creditAvailabilityWarningPercent = creditAvailabilityWarningPercent
         self.openingBalance = openingBalance
         self.openingBalanceDate = openingBalanceDate
         self.sortOrder = sortOrder
@@ -74,6 +77,7 @@ struct Account: Codable, FetchableRecord, MutablePersistableRecord, Identifiable
         static let includeInNetWorth = Column("include_in_net_worth")
         static let accumulationCurrency = Column("accumulation_currency")
         static let creditLimit = Column("credit_limit")
+        static let creditAvailabilityWarningPercent = Column("credit_availability_warning_percent")
         static let openingBalance = Column("opening_balance")
         static let openingBalanceDate = Column("opening_balance_date")
         static let sortOrder = Column("sort_order")
@@ -93,6 +97,7 @@ struct Account: Codable, FetchableRecord, MutablePersistableRecord, Identifiable
         case includeInNetWorth = "include_in_net_worth"
         case accumulationCurrency = "accumulation_currency"
         case creditLimit = "credit_limit"
+        case creditAvailabilityWarningPercent = "credit_availability_warning_percent"
         case openingBalance = "opening_balance"
         case openingBalanceDate = "opening_balance_date"
         case sortOrder = "sort_order"
