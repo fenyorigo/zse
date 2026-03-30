@@ -1,3 +1,20 @@
+zse 1.1 improves day-to-day usability with persistent filtering, better credit-card monitoring, and a new balance chart view for accounts and subaccounts.
+
+## Highlights
+- Per-account date range filters, persisted across app restarts
+- Credit card availability warning threshold with visual highlighting
+- Stacked area balance charts for accounts and relevant subaccounts
+- List / Chart toggle in account detail views
+- Improved chart timeline scaling and labeling
+- Chart support for postable leaf accounts
+- Corrected chart direction for income-category views
+- Additional import and UI stability refinements
+
+## Notes
+- Balance charts are state/balance charts, not performance charts
+- Charts work best on homogeneous-currency subtrees
+- Moneydance import and zse flat import remain separate manual import paths
+
 zse 1.0 is the first stable release of the app.
 
 ## Highlights
