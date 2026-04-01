@@ -380,10 +380,13 @@ public final class AppState: ObservableObject {
 
     private func refreshFxRates(trigger: BackgroundJobTrigger) async {
         let today = Self.startupRefreshDateFormatter.string(from: Date())
+        let isAfterMnbPublicationWindow = Self.isAfterMnbPublicationWindow()
 
         do {
             if let importedDate = try await fxRateImportService.refreshLatestRelevantRatesIfPossible() {
-                recordFxRefreshSuccess(completedOn: today)
+                if importedDate == today || !isAfterMnbPublicationWindow {
+                    recordFxRefreshSuccess(completedOn: today)
+                }
                 refreshDashboard()
                 NotificationCenter.default.post(name: .fxRatesDidRefresh, object: nil)
 
@@ -394,7 +397,9 @@ public final class AppState: ObservableObject {
                     lastErrorMessage = nil
                 }
             } else {
-                recordFxRefreshSuccess(completedOn: today)
+                if !isAfterMnbPublicationWindow {
+                    recordFxRefreshSuccess(completedOn: today)
+                }
                 refreshDashboard()
 
                 if trigger == .manual {
@@ -584,6 +589,9 @@ public final class AppState: ObservableObject {
         }
 
         let today = Self.startupRefreshDateFormatter.string(from: Date())
+        if latestFxRateDate != today, Self.isAfterMnbPublicationWindow() {
+            return true
+        }
         return lastSuccessfulFxRefreshDate != today
     }
 
@@ -608,6 +616,11 @@ public final class AppState: ObservableObject {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
+
+    private static func isAfterMnbPublicationWindow(now: Date = Date()) -> Bool {
+        let hour = Calendar(identifier: .gregorian).component(.hour, from: now)
+        return hour >= 10
+    }
 
     private static let operationalTimestampFormatter: DateFormatter = {
         let formatter = DateFormatter()

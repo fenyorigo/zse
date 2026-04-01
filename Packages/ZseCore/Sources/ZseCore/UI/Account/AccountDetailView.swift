@@ -104,6 +104,8 @@ struct AccountDetailView: View {
     @State private var recurringRuleTemplate: RecurringTransactionTemplate?
     @State private var isShowingRecurringRuleSheet = false
     @State private var inlineEditingTransactionID: Int64?
+    @State private var inlineEditingDate = Date()
+    @State private var inlineEditingState = "uncleared"
     @State private var inlineAmountText = ""
     @State private var pendingDeleteTransactionIDs = Set<Int64>()
     @State private var transactionSortOrder = AccountDetailView.defaultTransactionSortOrder
@@ -149,6 +151,9 @@ struct AccountDetailView: View {
             if selectedTransactionIDs.isEmpty {
                 inlineEditingTransactionID = nil
             }
+        }
+        .onExitCommand {
+            requestFinishInlineEditing(commit: false)
         }
         .alert("Could Not Update Transaction", isPresented: Binding(
             get: { viewModel.transactionEditErrorMessage != nil },
@@ -539,12 +544,17 @@ struct AccountDetailView: View {
         }
 
         let usedBeforeReimbursement = nextReimbursementIndex.flatMap { index -> Double? in
+            let reimbursementItem = orderedTransactions[index]
+
+            if reimbursementItem.state == "reconciling" || reimbursementItem.state == "cleared" {
+                return displayRunningBalance(for: reimbursementItem, accountClass: account.class)
+            }
+
             guard index > 0 else {
                 return nil
             }
 
-            let priorItem = orderedTransactions[index - 1]
-            return displayRunningBalance(for: priorItem, accountClass: account.class)
+            return displayRunningBalance(for: orderedTransactions[index - 1], accountClass: account.class)
         }
 
         let availableBeforeNextReimbursement = account.creditLimit.flatMap { creditLimit in
@@ -682,10 +692,14 @@ struct AccountDetailView: View {
                         .controlSize(.small)
                         .focused($inlineAmountFieldFocused)
                         .onSubmit {
-                            finishInlineEditing(commit: true)
+                            requestFinishInlineEditing(commit: true)
+                        }
+                        .onKeyPress(.return) {
+                            requestFinishInlineEditing(commit: true)
+                            return .handled
                         }
                         .onExitCommand {
-                            finishInlineEditing(commit: false)
+                            requestFinishInlineEditing(commit: false)
                         }
                     Text(context.currency)
                         .foregroundStyle(.secondary)
@@ -723,17 +737,13 @@ struct AccountDetailView: View {
     @ViewBuilder
     private func dateCell(for item: TransactionListItem) -> some View {
         if singleSelectedTransactionID == item.id,
-           inlineEditingTransactionID == item.id,
-           let selectedDate = date(from: item.txnDate) {
+           inlineEditingTransactionID == item.id {
             DatePicker(
                 "",
                 selection: Binding(
-                    get: { selectedDate },
+                    get: { inlineEditingDate },
                     set: { newValue in
-                        viewModel.updateSelectedTransactionDate(newValue)
-                        if viewModel.transactionEditErrorMessage == nil {
-                            onTransactionUpdated()
-                        }
+                        inlineEditingDate = newValue
                     }
                 ),
                 displayedComponents: .date
@@ -743,7 +753,14 @@ struct AccountDetailView: View {
             .controlSize(.small)
             .frame(width: 118, alignment: .leading)
             .onSubmit {
-                finishInlineEditing(commit: true)
+                requestFinishInlineEditing(commit: true)
+            }
+            .onKeyPress(.return) {
+                requestFinishInlineEditing(commit: true)
+                return .handled
+            }
+            .onExitCommand {
+                requestFinishInlineEditing(commit: false)
             }
         } else {
             plainTextCell(item.txnDate)
@@ -756,12 +773,9 @@ struct AccountDetailView: View {
             Picker(
                 "",
                 selection: Binding(
-                    get: { item.state },
+                    get: { inlineEditingState },
                     set: { newValue in
-                        viewModel.updateSelectedTransactionState(newValue)
-                        if viewModel.transactionEditErrorMessage == nil {
-                            onTransactionUpdated()
-                        }
+                        inlineEditingState = newValue
                     }
                 )
             ) {
@@ -772,6 +786,13 @@ struct AccountDetailView: View {
             .labelsHidden()
             .pickerStyle(.menu)
             .controlSize(.small)
+            .onKeyPress(.return) {
+                requestFinishInlineEditing(commit: true)
+                return .handled
+            }
+            .onExitCommand {
+                requestFinishInlineEditing(commit: false)
+            }
         } else {
             statusBadgeCell(for: item)
         }
@@ -952,6 +973,8 @@ struct AccountDetailView: View {
         selectedTransactionIDs = [item.id]
         viewModel.selectTransaction(transactionID: item.id)
         inlineEditingTransactionID = item.id
+        inlineEditingDate = date(from: item.txnDate) ?? Date()
+        inlineEditingState = item.state
         if let context = viewModel.inlineAmountEditContext() {
             inlineAmountText = String(format: "%.2f", context.amount)
             inlineAmountFieldFocused = true
@@ -978,22 +1001,50 @@ struct AccountDetailView: View {
             return
         }
 
-        guard viewModel.inlineAmountEditContext() != nil else {
-            return
-        }
-
-        let normalized = inlineAmountText.replacingOccurrences(of: ",", with: ".")
-        guard let amount = Double(normalized), amount > 0 else {
-            viewModel.transactionEditErrorMessage = "Amount must be a valid number greater than zero."
-            return
-        }
-
         do {
-            try viewModel.updateSelectedTransactionAmount(amount)
-            inlineAmountText = String(format: "%.2f", amount)
+            guard let detail = viewModel.currentTransactionDetail else {
+                return
+            }
+
+            let inlineDateString = Self.inlineDateFormatter.string(from: inlineEditingDate)
+
+            if let context = viewModel.inlineAmountEditContext() {
+                let normalized = inlineAmountText.replacingOccurrences(of: ",", with: ".")
+                guard let amount = Double(normalized), amount > 0 else {
+                    viewModel.transactionEditErrorMessage = "Amount must be a valid number greater than zero."
+                    return
+                }
+
+                try viewModel.updateSelectedTransaction(
+                    txnDate: inlineDateString,
+                    description: detail.description,
+                    state: inlineEditingState,
+                    type: context.type,
+                    counterpartAccountID: context.counterpartAccountID,
+                    currentAmount: amount,
+                    counterpartAmount: amount
+                )
+                inlineAmountText = String(format: "%.2f", amount)
+            } else {
+                try viewModel.updateSelectedTransaction(
+                    txnDate: inlineDateString,
+                    description: detail.description,
+                    state: inlineEditingState,
+                    type: viewModel.editableTransactionType() ?? .transfer,
+                    counterpartAccountID: nil,
+                    currentAmount: nil,
+                    counterpartAmount: nil
+                )
+            }
             onTransactionUpdated()
         } catch {
             viewModel.transactionEditErrorMessage = error.localizedDescription
+        }
+    }
+
+    private func requestFinishInlineEditing(commit: Bool) {
+        DispatchQueue.main.async {
+            finishInlineEditing(commit: commit)
         }
     }
 
@@ -1324,10 +1375,12 @@ struct AccountDetailView: View {
     }
 
     private func syncInspectorSelection(with transactionIDs: Set<Int64>) {
-        if transactionIDs.count == 1, let transactionID = transactionIDs.first {
-            viewModel.selectTransaction(transactionID: transactionID)
-        } else {
-            viewModel.selectTransaction(transactionID: nil)
+        DispatchQueue.main.async {
+            if transactionIDs.count == 1, let transactionID = transactionIDs.first {
+                viewModel.selectTransaction(transactionID: transactionID)
+            } else {
+                viewModel.selectTransaction(transactionID: nil)
+            }
         }
     }
 
@@ -1418,10 +1471,24 @@ struct AccountDetailView: View {
 
     private func deferSelectionChange(to transactionIDs: Set<Int64>) {
         DispatchQueue.main.async {
-            if transactionIDs.count != 1 || inlineEditingTransactionID != transactionIDs.first {
-                finishInlineEditing(commit: true)
+            guard let inlineEditingTransactionID else {
+                syncInspectorSelection(with: transactionIDs)
+                return
             }
-            syncInspectorSelection(with: transactionIDs)
+
+            if transactionIDs.count == 1, let selectedTransactionID = transactionIDs.first {
+                if selectedTransactionID != inlineEditingTransactionID {
+                    finishInlineEditing(commit: true)
+                }
+                syncInspectorSelection(with: transactionIDs)
+                return
+            }
+
+            let preservedSelection: Set<Int64> = [inlineEditingTransactionID]
+            if selectedTransactionIDs != preservedSelection {
+                selectedTransactionIDs = preservedSelection
+            }
+            syncInspectorSelection(with: preservedSelection)
         }
     }
 
@@ -1475,14 +1542,19 @@ struct AccountDetailView: View {
         }
 
         guard let parsedDate = Self.filterDateFormatter.date(from: trimmed) else {
-            afterDateText = Self.filterDateFormatter.string(from: afterDate)
+            let restoredText = Self.filterDateFormatter.string(from: afterDate)
+            DispatchQueue.main.async {
+                afterDateText = restoredText
+            }
             return
         }
 
-        afterDate = parsedDate
         let normalizedText = Self.filterDateFormatter.string(from: parsedDate)
-        if afterDateText != normalizedText {
-            afterDateText = normalizedText
+        DispatchQueue.main.async {
+            afterDate = parsedDate
+            if afterDateText != normalizedText {
+                afterDateText = normalizedText
+            }
         }
     }
 
@@ -1493,14 +1565,19 @@ struct AccountDetailView: View {
         }
 
         guard let parsedDate = Self.filterDateFormatter.date(from: trimmed) else {
-            beforeDateText = Self.filterDateFormatter.string(from: beforeDate)
+            let restoredText = Self.filterDateFormatter.string(from: beforeDate)
+            DispatchQueue.main.async {
+                beforeDateText = restoredText
+            }
             return
         }
 
-        beforeDate = parsedDate
         let normalizedText = Self.filterDateFormatter.string(from: parsedDate)
-        if beforeDateText != normalizedText {
-            beforeDateText = normalizedText
+        DispatchQueue.main.async {
+            beforeDate = parsedDate
+            if beforeDateText != normalizedText {
+                beforeDateText = normalizedText
+            }
         }
     }
 
