@@ -46,6 +46,7 @@ struct ContentView: View {
         _sidebarViewModel = StateObject(
             wrappedValue: AccountSidebarViewModel(
                 accountRepository: accountRepository,
+                transactionRepository: transactionRepository,
                 valuationService: rollupValuationService
             )
         )
