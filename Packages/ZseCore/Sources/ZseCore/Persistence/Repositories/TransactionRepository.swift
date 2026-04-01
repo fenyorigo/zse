@@ -242,7 +242,10 @@ struct TransactionRepository {
         _ = try Transaction.deleteOne(db, key: id)
     }
 
-    func fetchTransactions(forAccountID accountID: Int64) throws -> [TransactionListItem] {
+    func fetchTransactions(
+        forAccountID accountID: Int64,
+        performanceTrace: PerformanceTrace? = nil
+    ) throws -> [TransactionListItem] {
         let sql = """
             SELECT
                 transactions.id AS transactionID,
@@ -294,6 +297,7 @@ struct TransactionRepository {
             ) ?? 0
 
             let rows = try TransactionListRow.fetchAll(db, sql: sql, arguments: [accountID, accountID])
+            performanceTrace?.mark("DB fetch finished")
             var runningBalance = openingBalance
             let ascendingItems = rows.map { row in
                 runningBalance += row.accountAmount
@@ -317,6 +321,7 @@ struct TransactionRepository {
                     recurringOccurrenceDate: row.recurringOccurrenceDate
                 )
             }
+            performanceTrace?.mark("Running balance finished")
 
             return ascendingItems
         }

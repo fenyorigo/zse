@@ -121,6 +121,8 @@ struct AccountDetailView: View {
     @State private var beforeDateText = Self.filterDateFormatter.string(from: Self.defaultBeforeFilterDate)
     @State private var balanceChartState: BalanceChartState = .hidden
     @State private var contentDisplayMode: ContentDisplayMode = .list
+    @State private var isRestoringFilterState = false
+    @State private var skipNextTransactionsChartRefresh = false
     @FocusState private var inlineAmountFieldFocused: Bool
     let onEditAccount: () -> Void
     let onDeleteAccount: () -> Void
@@ -290,23 +292,25 @@ struct AccountDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            loadFilterState(for: account.id)
+            restoreFilterState(for: account.id)
             refreshBalanceChart(for: account)
         }
         .onChange(of: account.id) { _, _ in
-            resetFilters(persist: false)
-            loadFilterState(for: account.id)
+            restoreFilterState(for: account.id, resetFirst: true)
             refreshBalanceChart(for: account)
         }
         .onChange(of: statusFilter) { _, _ in
+            guard !isRestoringFilterState else { return }
             storeCurrentFilterState()
             refreshBalanceChart(for: account)
         }
         .onChange(of: afterDate) { _, _ in
+            guard !isRestoringFilterState else { return }
             storeCurrentFilterState()
             refreshBalanceChart(for: account)
         }
         .onChange(of: beforeDate) { _, _ in
+            guard !isRestoringFilterState else { return }
             storeCurrentFilterState()
             refreshBalanceChart(for: account)
         }
@@ -432,44 +436,57 @@ struct AccountDetailView: View {
                         deferSelectionChange(to: newValue)
                     }
                     .onChange(of: statusFilter) { _, _ in
+                        guard !isRestoringFilterState else { return }
                         storeCurrentFilterState()
                         refreshBalanceChart(for: account)
                         deferVisibleSelectionSync(transactions)
                     }
                     .onChange(of: selectedPartnerName) { _, _ in
+                        guard !isRestoringFilterState else { return }
                         storeCurrentFilterState()
                         deferVisibleSelectionSync(transactions)
                     }
                     .onChange(of: selectedCategoryName) { _, _ in
+                        guard !isRestoringFilterState else { return }
                         storeCurrentFilterState()
                         deferVisibleSelectionSync(transactions)
                     }
                     .onChange(of: searchText) { _, _ in
+                        guard !isRestoringFilterState else { return }
                         storeCurrentFilterState()
                         deferVisibleSelectionSync(transactions)
                     }
                     .onChange(of: includeProjectedRecurring) { _, _ in
+                        guard !isRestoringFilterState else { return }
                         storeCurrentFilterState()
                         deferVisibleSelectionSync(transactions)
                     }
                     .onChange(of: afterDate) { _, _ in
+                        guard !isRestoringFilterState else { return }
                         storeCurrentFilterState()
                         refreshBalanceChart(for: account)
                         deferVisibleSelectionSync(transactions)
                     }
                     .onChange(of: beforeDate) { _, _ in
+                        guard !isRestoringFilterState else { return }
                         storeCurrentFilterState()
                         refreshBalanceChart(for: account)
                         deferVisibleSelectionSync(transactions)
                     }
                     .onChange(of: transactions.map(\.id)) { _, _ in
+                        if skipNextTransactionsChartRefresh {
+                            skipNextTransactionsChartRefresh = false
+                            deferVisibleSelectionSync(transactions)
+                            return
+                        }
                         refreshBalanceChart(for: account)
                         deferVisibleSelectionSync(transactions)
                     }
                 }
             }
             .onAppear {
-                loadFilterState(for: account.id)
+                restoreFilterState(for: account.id)
+                skipNextTransactionsChartRefresh = true
                 refreshBalanceChart(for: account)
                 selectedTransactionIDs = selectionSet(from: viewModel.selectedTransactionID)
                 transactionSortOrder = Self.defaultTransactionSortOrder
@@ -480,8 +497,8 @@ struct AccountDetailView: View {
                 selectedTransactionIDs = []
                 inlineEditingTransactionID = nil
                 transactionSortOrder = Self.defaultTransactionSortOrder
-                resetFilters(persist: false)
-                loadFilterState(for: account.id)
+                restoreFilterState(for: account.id, resetFirst: true)
+                skipNextTransactionsChartRefresh = true
                 refreshBalanceChart(for: account)
                 contentDisplayMode = .list
             }
@@ -1452,6 +1469,17 @@ struct AccountDetailView: View {
         beforeDateText = Self.filterDateFormatter.string(from: beforeDate)
     }
 
+    private func restoreFilterState(for accountID: Int64?, resetFirst: Bool = false) {
+        isRestoringFilterState = true
+        if resetFirst {
+            resetFilters(persist: false)
+        }
+        loadFilterState(for: accountID)
+        DispatchQueue.main.async {
+            isRestoringFilterState = false
+        }
+    }
+
     private func syncSelectionWithVisibleTransactions(_ transactions: [TransactionListItem]) {
         guard !selectedTransactionIDs.isEmpty else {
             return
@@ -1514,6 +1542,7 @@ struct AccountDetailView: View {
     }
 
     private func refreshBalanceChart(for account: Account) {
+        let trace = PerformanceTrace(name: "Account chart", context: account.name)
         do {
             let result = try appState.accountBalanceChartService.buildChart(
                 rootAccount: account,
@@ -1521,6 +1550,7 @@ struct AccountDetailView: View {
                 beforeDate: Self.filterDateFormatter.string(from: beforeDate),
                 statusFilter: statusFilter.rawValue
             )
+            trace.mark("Chart build finished")
 
             switch result {
             case .hidden:
@@ -1530,8 +1560,10 @@ struct AccountDetailView: View {
             case .ready(let presentation):
                 balanceChartState = .ready(presentation)
             }
+            trace.finish(totalLabel: "Chart ready")
         } catch {
             balanceChartState = .unavailable(error.localizedDescription)
+            trace.finish(totalLabel: "Chart ready")
         }
     }
 

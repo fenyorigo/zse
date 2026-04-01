@@ -49,17 +49,24 @@ final class AccountDetailViewModel: ObservableObject {
     }
 
     func setSelection(_ selection: SidebarSelection?, account: Account?) {
+        let selectionTrace = PerformanceTrace(
+            name: "Account switch",
+            context: account?.name ?? selection?.title
+        )
         clearTransactionSelection()
         deleteAvailability = DeleteAvailability(isAllowed: false, message: nil)
+        selectionTrace.mark("Account switch started")
 
         guard let selection else {
             state = .noneSelected
+            selectionTrace.finish(totalLabel: "List ready")
             return
         }
 
         switch selection.kind {
         case .grouping, .currency:
             state = .groupingNode(selection.title)
+            selectionTrace.finish(totalLabel: "List ready")
             return
         case .account:
             break
@@ -67,21 +74,32 @@ final class AccountDetailViewModel: ObservableObject {
 
         guard let account else {
             state = .failed(nil, "The selected account could not be loaded.")
+            selectionTrace.finish(totalLabel: "List ready")
             return
         }
 
         updateDeleteAvailability(for: account)
+        selectionTrace.mark("Delete availability finished")
 
         guard !isNonLeafAccount(account) else {
             state = .nonPostable(account)
+            selectionTrace.mark("Leaf check finished")
+            selectionTrace.finish(totalLabel: "List ready")
             return
         }
+        selectionTrace.mark("Leaf check finished")
 
         do {
-            let transactions = try transactionRepository.fetchTransactions(forAccountID: account.id ?? 0)
+            let transactions = try transactionRepository.fetchTransactions(
+                forAccountID: account.id ?? 0,
+                performanceTrace: selectionTrace
+            )
             state = .postable(account, transactions)
+            selectionTrace.mark("View model published")
+            selectionTrace.finish(totalLabel: "List ready")
         } catch {
             state = .failed(account, error.localizedDescription)
+            selectionTrace.finish(totalLabel: "List ready")
         }
     }
 
