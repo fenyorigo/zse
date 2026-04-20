@@ -4,6 +4,7 @@ import SwiftUI
 fileprivate struct AccountReportNode: Identifiable {
     let account: Account
     let children: [AccountReportNode]
+    let descendantLeafIDs: Set<Int64>
 
     var id: Int64 { account.id ?? 0 }
 }
@@ -118,6 +119,7 @@ struct AccountReportSheet: View {
             let realAccounts = accounts.filter { account in
                 account.class == "asset" || account.class == "liability"
             }
+            let realAccountIDs = Set(realAccounts.compactMap(\.id))
             let realAccountsByParent = Dictionary(grouping: realAccounts, by: \.parentID)
 
             let roots = realAccounts
@@ -125,7 +127,7 @@ struct AccountReportSheet: View {
                     guard let parentID = account.parentID else {
                         return true
                     }
-                    return !realAccounts.contains(where: { $0.id == parentID })
+                    return !realAccountIDs.contains(parentID)
                 }
                 .sorted(by: accountSort)
 
@@ -149,7 +151,20 @@ struct AccountReportSheet: View {
             .sorted(by: accountSort)
             .map { buildNode(for: $0, childMap: childMap) }
 
-        return AccountReportNode(account: account, children: children)
+        let descendantLeafIDs: Set<Int64>
+        if children.isEmpty {
+            descendantLeafIDs = account.id.map { [$0] } ?? []
+        } else {
+            descendantLeafIDs = children.reduce(into: Set<Int64>()) { partialResult, child in
+                partialResult.formUnion(child.descendantLeafIDs)
+            }
+        }
+
+        return AccountReportNode(
+            account: account,
+            children: children,
+            descendantLeafIDs: descendantLeafIDs
+        )
     }
 
     private func accountSort(_ lhs: Account, _ rhs: Account) -> Bool {
@@ -246,24 +261,6 @@ private struct AccountReportNodeView: View {
         }
     }
 
-    private var descendantLeafIDs: Set<Int64> {
-        if node.children.isEmpty {
-            guard let accountID = node.account.id else {
-                return []
-            }
-            return [accountID]
-        }
-
-        return Set(node.children.flatMap(descendantLeafIDs(for:)))
-    }
-
-    private func descendantLeafIDs(for node: AccountReportNode) -> [Int64] {
-        if node.children.isEmpty {
-            return node.account.id.map { [$0] } ?? []
-        }
-        return node.children.flatMap(descendantLeafIDs(for:))
-    }
-
     private var leafSelectionBinding: Binding<Bool> {
         Binding(
             get: {
@@ -284,13 +281,13 @@ private struct AccountReportNodeView: View {
     private var groupSelectionBinding: Binding<Bool> {
         Binding(
             get: {
-                !descendantLeafIDs.isEmpty && descendantLeafIDs.isSubset(of: selectedLeafAccountIDs)
+                !node.descendantLeafIDs.isEmpty && node.descendantLeafIDs.isSubset(of: selectedLeafAccountIDs)
             },
             set: { isSelected in
                 if isSelected {
-                    selectedLeafAccountIDs.formUnion(descendantLeafIDs)
+                    selectedLeafAccountIDs.formUnion(node.descendantLeafIDs)
                 } else {
-                    selectedLeafAccountIDs.subtract(descendantLeafIDs)
+                    selectedLeafAccountIDs.subtract(node.descendantLeafIDs)
                 }
             }
         )

@@ -1,3 +1,15 @@
+## 1.1.2
+
+Patch release focused on persistent hierarchical account visibility and follow-up simplifications.
+
+### Highlights
+- Persistent hide and unhide behavior for account hierarchies
+- `Show Hidden` remains a temporary view toggle, while `Manage Hidden` edits persistent visibility
+- Tree-based `Manage Hidden` sheet with checkbox selection and hierarchy-aware apply behavior
+- Parent visibility now follows child visibility consistently across restarts
+- Credit-card availability logic consolidated into a shared service for consistency between sidebar and detail views
+- Internal code review and simplification pass on account visibility and reporting flows
+
 ## 1.1.1
 
 Patch release focused on account visibility management, reporting, and credit-card availability accuracy.

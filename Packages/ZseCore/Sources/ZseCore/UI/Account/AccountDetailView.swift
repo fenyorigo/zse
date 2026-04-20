@@ -106,6 +106,7 @@ struct AccountDetailView: View {
 
     @EnvironmentObject private var appState: AppState
     @ObservedObject var viewModel: AccountDetailViewModel
+    private let creditCardAvailabilityService = CreditCardAvailabilityService()
     @State private var selectedTransactionIDs = Set<Int64>()
     @State private var isShowingTransactionViewSheet = false
     @State private var isShowingEditTransactionSheet = false
@@ -558,64 +559,16 @@ struct AccountDetailView: View {
         for account: Account,
         transactions: [TransactionListItem]
     ) -> CreditCardAvailabilitySummary? {
-        guard account.class == "liability",
-              Self.creditCardSubtypes.contains(account.subtype) else {
+        guard let snapshot = creditCardAvailabilityService.snapshot(for: account, transactions: transactions) else {
             return nil
         }
-
-        let orderedTransactions = transactions.sorted(using: Self.defaultTransactionSortOrder)
-        let nextReimbursementIndex = orderedTransactions.firstIndex { item in
-            item.txnDate >= Self.todayDateString &&
-            item.memoSummary == "Hitelkártya visszafizetés" &&
-            (displayInAmount(for: item, accountClass: account.class) ?? 0) > 0
-        }
-
-        let maximumUsedCreditBeforeNextReimbursement = forecastMaximumUsedCredit(
-            for: account,
-            transactions: orderedTransactions,
-            nextReimbursementIndex: nextReimbursementIndex
-        )
-        let availableBeforeNextReimbursement = account.creditLimit.flatMap { creditLimit in
-            maximumUsedCreditBeforeNextReimbursement.map { max(0, creditLimit - $0) }
-        }
-        let nextReimbursementDate = nextReimbursementIndex.map { orderedTransactions[$0].txnDate }
 
         return CreditCardAvailabilitySummary(
             creditLimit: account.creditLimit,
             creditAvailabilityWarningPercent: account.creditAvailabilityWarningPercent,
-            availableBeforeNextReimbursement: availableBeforeNextReimbursement,
-            nextReimbursementDate: nextReimbursementDate
+            availableBeforeNextReimbursement: snapshot.availableBeforeNextReimbursement,
+            nextReimbursementDate: snapshot.nextReimbursementDate
         )
-    }
-
-    private func forecastMaximumUsedCredit(
-        for account: Account,
-        transactions: [TransactionListItem],
-        nextReimbursementIndex: Int?
-    ) -> Double? {
-        let currentIndex = transactions.lastIndex { $0.txnDate <= Self.todayDateString }
-        let startIndex = currentIndex ?? 0
-        let upperBound = nextReimbursementIndex ?? transactions.count
-
-        guard startIndex < upperBound else {
-            if let currentIndex {
-                return max(0, displayRunningBalance(for: transactions[currentIndex], accountClass: account.class))
-            }
-            return max(0, account.openingBalance ?? 0)
-        }
-
-        var maximumUsedCredit = currentIndex.map {
-            max(0, displayRunningBalance(for: transactions[$0], accountClass: account.class))
-        } ?? max(0, account.openingBalance ?? 0)
-
-        for index in startIndex..<upperBound {
-            maximumUsedCredit = max(
-                maximumUsedCredit,
-                max(0, displayRunningBalance(for: transactions[index], accountClass: account.class))
-            )
-        }
-
-        return maximumUsedCredit
     }
 
     private func displayOutAmount(for item: TransactionListItem, accountClass: String) -> Double? {

@@ -173,6 +173,13 @@ struct ContentView: View {
             .onChange(of: appState.isManualFxRefreshInProgress) { _, newValue in
                 isShowingFxRefreshProgress = newValue
             }
+            .onChange(of: sidebarViewModel.reloadRevision) { _, _ in
+                clearInvalidSelection()
+                accountDetailViewModel.setSelection(
+                    selectedSidebarItem,
+                    account: sidebarViewModel.account(for: selectedSidebarItem)
+                )
+            }
     }
 
     private var observedContent: some View {
@@ -460,7 +467,7 @@ struct ContentView: View {
     }
 
     private func clearInvalidSelection() {
-        guard sidebarViewModel.account(for: selectedSidebarItem) == nil else {
+        guard !sidebarViewModel.isSelectionVisible(selectedSidebarItem) else {
             return
         }
 

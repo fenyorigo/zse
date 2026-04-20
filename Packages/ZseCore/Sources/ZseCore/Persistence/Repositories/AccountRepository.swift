@@ -25,6 +25,169 @@ struct AccountRepository {
         }
     }
 
+    func setHidden(_ isHidden: Bool, forAccountID accountID: Int64) throws {
+        try databaseManager.writeInTransaction { db in
+            let accounts = try getAllAccounts(db: db)
+            var accountsByID = Dictionary(
+                uniqueKeysWithValues: accounts.compactMap { account -> (Int64, Account)? in
+                    guard let accountID = account.id else {
+                        return nil
+                    }
+                    return (accountID, account)
+                }
+            )
+            let childIDsByParentID = Dictionary(grouping: accounts.compactMap { account -> (Int64, Int64)? in
+                guard let accountID = account.id,
+                      let parentID = account.parentID else {
+                    return nil
+                }
+                return (parentID, accountID)
+            }, by: \.0).mapValues { pairs in
+                pairs.map(\.1)
+            }
+
+            guard let targetAccount = accountsByID[accountID] else {
+                return
+            }
+
+            let updatedAt = Account.makeTimestamp()
+
+            func descendantIDs(for rootAccountID: Int64) -> [Int64] {
+                var orderedIDs: [Int64] = []
+                var stack = [rootAccountID]
+
+                while let currentID = stack.popLast() {
+                    orderedIDs.append(currentID)
+                    let childIDs = childIDsByParentID[currentID] ?? []
+                    stack.append(contentsOf: childIDs.reversed())
+                }
+
+                return orderedIDs
+            }
+
+            func updateHiddenState(accountID: Int64, isHidden: Bool) throws {
+                guard var account = accountsByID[accountID] else {
+                    return
+                }
+
+                guard account.isHidden != isHidden else {
+                    return
+                }
+
+                account.isHidden = isHidden
+                account.updatedAt = updatedAt
+                try account.update(db)
+                accountsByID[accountID] = account
+            }
+
+            if isHidden {
+                for descendantAccountID in descendantIDs(for: accountID) {
+                    try updateHiddenState(accountID: descendantAccountID, isHidden: true)
+                }
+
+                var currentParentID = targetAccount.parentID
+                while let parentID = currentParentID {
+                    guard let parentAccount = accountsByID[parentID] else {
+                        break
+                    }
+
+                    let childIDs = childIDsByParentID[parentID] ?? []
+                    let allChildrenHidden = !childIDs.isEmpty && childIDs.allSatisfy { childID in
+                        accountsByID[childID]?.isHidden == true
+                    }
+                    try updateHiddenState(accountID: parentID, isHidden: allChildrenHidden)
+                    currentParentID = parentAccount.parentID
+                }
+            } else {
+                for descendantAccountID in descendantIDs(for: accountID) {
+                    try updateHiddenState(accountID: descendantAccountID, isHidden: false)
+                }
+
+                var currentParentID = targetAccount.parentID
+                while let parentID = currentParentID {
+                    guard let parentAccount = accountsByID[parentID] else {
+                        break
+                    }
+
+                    try updateHiddenState(accountID: parentID, isHidden: false)
+                    currentParentID = parentAccount.parentID
+                }
+            }
+        }
+    }
+
+    func applyVisibleLeafAccountIDs(_ visibleLeafAccountIDs: Set<Int64>) throws {
+        try databaseManager.writeInTransaction { db in
+            let accounts = try getAllAccounts(db: db)
+            let managedAccounts = accounts.filter { account in
+                account.class == "asset" || account.class == "liability"
+            }
+            var accountsByID = Dictionary(
+                uniqueKeysWithValues: managedAccounts.compactMap { account -> (Int64, Account)? in
+                    guard let accountID = account.id else {
+                        return nil
+                    }
+                    return (accountID, account)
+                }
+            )
+            let childIDsByParentID = Dictionary(grouping: managedAccounts.compactMap { account -> (Int64, Int64)? in
+                guard let accountID = account.id,
+                      let parentID = account.parentID,
+                      accountsByID[parentID] != nil else {
+                    return nil
+                }
+                return (parentID, accountID)
+            }, by: \.0).mapValues { pairs in
+                pairs.map(\.1)
+            }
+            let updatedAt = Account.makeTimestamp()
+
+            func applyVisibility(accountID: Int64) throws -> Bool {
+                guard var account = accountsByID[accountID] else {
+                    return false
+                }
+
+                let childIDs = childIDsByParentID[accountID] ?? []
+                let isVisible: Bool
+                if childIDs.isEmpty {
+                    isVisible = visibleLeafAccountIDs.contains(accountID)
+                } else {
+                    var hasVisibleChild = false
+                    for childID in childIDs {
+                        if try applyVisibility(accountID: childID) {
+                            hasVisibleChild = true
+                        }
+                    }
+                    isVisible = hasVisibleChild
+                }
+
+                let shouldBeHidden = !isVisible
+                if account.isHidden != shouldBeHidden {
+                    account.isHidden = shouldBeHidden
+                    account.updatedAt = updatedAt
+                    try account.update(db)
+                    accountsByID[accountID] = account
+                }
+
+                return isVisible
+            }
+
+            let rootIDs = managedAccounts.compactMap { account -> Int64? in
+                guard let accountID = account.id else {
+                    return nil
+                }
+                guard let parentID = account.parentID else {
+                    return accountID
+                }
+                return accountsByID[parentID] == nil ? accountID : nil
+            }
+
+            for rootID in rootIDs {
+                _ = try applyVisibility(accountID: rootID)
+            }
+        }
+    }
+
     func getAccount(id: Int64) throws -> Account? {
         try databaseManager.dbQueue.read { db in
             try getAccount(id: id, db: db)
