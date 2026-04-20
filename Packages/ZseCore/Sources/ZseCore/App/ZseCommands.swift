@@ -90,6 +90,12 @@ public struct ZseCommands: Commands {
             }
         }
 
+        CommandMenu("Reports") {
+            Button("Account Report...") {
+                NotificationCenter.default.post(name: .openAccountReportSheet, object: nil)
+            }
+        }
+
         CommandMenu("Developer") {
             Button("Developer Status") {
                 NotificationCenter.default.post(name: .openDeveloperStatusSheet, object: nil)

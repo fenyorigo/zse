@@ -1,3 +1,16 @@
+zse 1.1.1 is a focused usability update with hidden-account management, account reporting, and more accurate credit-card availability forecasting.
+
+## Highlights
+- Right-click hide and unhide support in the account sidebar
+- Dedicated hidden-account manager from the sidebar toolbar
+- New account report sheet with a Reports menu entry
+- Improved available-before-next-reimbursement calculation for credit cards
+- Clearer credit availability status coloring in account detail views
+
+## Notes
+- Hidden-account management currently applies to asset and liability accounts
+- Account reports are generated from selected account leaves and date bounds
+
 # Zse
 
 Zse is a macOS personal-finance app for multi-currency household finance tracking.
@@ -21,9 +34,14 @@ It combines:
 
 - Account hierarchy
   - hidden accounts
+  - sidebar hide / unhide context actions
+  - dedicated hidden-account manager
   - default-expanded account tree
   - opening balances
   - optional accumulation currency on non-leaf/group accounts
+- Reporting
+  - account report sheet
+  - report access from the app menu
 - Transactions
   - cleared / pending / uncleared states
   - import warning flags
@@ -33,6 +51,7 @@ It combines:
   - liability-aware In/Out display
   - credit limit
   - available-before-next-reimbursement summary
+  - improved forward-looking reimbursement availability forecast
 - Moneydance import
   - account type mapping
   - hierarchy preservation

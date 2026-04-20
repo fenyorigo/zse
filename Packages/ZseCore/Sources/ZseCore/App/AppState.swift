@@ -63,6 +63,7 @@ public final class AppState: ObservableObject {
     let recurringTransactionService: RecurringTransactionService
     let importService: ImportService
     let zseFlatFileService: ZseFlatFileService
+    let accountReportService: AccountReportService
     let fxRateImportService: FxRateImportService
     let rollupValuationService: RollupValuationService
     let accountBalanceChartService: AccountBalanceChartService
@@ -99,6 +100,10 @@ public final class AppState: ObservableObject {
         )
         self.zseFlatFileService = ZseFlatFileService(
             databaseManager: databaseManager,
+            accountRepository: self.accountRepository,
+            transactionRepository: self.transactionRepository
+        )
+        self.accountReportService = AccountReportService(
             accountRepository: self.accountRepository,
             transactionRepository: self.transactionRepository
         )
@@ -651,4 +656,5 @@ extension Notification.Name {
     static let generateDueRecurringTransactions = Notification.Name("generateDueRecurringTransactions")
     static let openImportTransactionsSheet = Notification.Name("openImportTransactionsSheet")
     static let openExportTransactionsSheet = Notification.Name("openExportTransactionsSheet")
+    static let openAccountReportSheet = Notification.Name("openAccountReportSheet")
 }

@@ -92,6 +92,16 @@ struct AccountDetailView: View {
 
             return availableBeforeNextReimbursement < creditLimit * (creditAvailabilityWarningPercent / 100)
         }
+
+        var availabilityColor: Color? {
+            guard let creditAvailabilityWarningPercent,
+                  creditAvailabilityWarningPercent > 0,
+                  availableBeforeNextReimbursement != nil else {
+                return nil
+            }
+
+            return isBelowWarningThreshold ? .red : .green
+        }
     }
 
     @EnvironmentObject private var appState: AppState
@@ -525,8 +535,8 @@ struct AccountDetailView: View {
                         value: creditCardAvailability.availableBeforeNextReimbursement.map {
                             formattedAccountMetric($0, currency: "HUF")
                         } ?? "N/A",
-                        color: creditCardAvailability.isBelowWarningThreshold ? .orange : nil,
-                        isEmphasized: creditCardAvailability.isBelowWarningThreshold
+                        color: creditCardAvailability.availabilityColor,
+                        isEmphasized: creditCardAvailability.availabilityColor != nil
                     )
                     compactMetricText(
                         title: "Next",
@@ -560,22 +570,13 @@ struct AccountDetailView: View {
             (displayInAmount(for: item, accountClass: account.class) ?? 0) > 0
         }
 
-        let usedBeforeReimbursement = nextReimbursementIndex.flatMap { index -> Double? in
-            let reimbursementItem = orderedTransactions[index]
-
-            if reimbursementItem.state == "reconciling" || reimbursementItem.state == "cleared" {
-                return displayRunningBalance(for: reimbursementItem, accountClass: account.class)
-            }
-
-            guard index > 0 else {
-                return nil
-            }
-
-            return displayRunningBalance(for: orderedTransactions[index - 1], accountClass: account.class)
-        }
-
+        let maximumUsedCreditBeforeNextReimbursement = forecastMaximumUsedCredit(
+            for: account,
+            transactions: orderedTransactions,
+            nextReimbursementIndex: nextReimbursementIndex
+        )
         let availableBeforeNextReimbursement = account.creditLimit.flatMap { creditLimit in
-            usedBeforeReimbursement.map { creditLimit - $0 }
+            maximumUsedCreditBeforeNextReimbursement.map { max(0, creditLimit - $0) }
         }
         let nextReimbursementDate = nextReimbursementIndex.map { orderedTransactions[$0].txnDate }
 
@@ -585,6 +586,36 @@ struct AccountDetailView: View {
             availableBeforeNextReimbursement: availableBeforeNextReimbursement,
             nextReimbursementDate: nextReimbursementDate
         )
+    }
+
+    private func forecastMaximumUsedCredit(
+        for account: Account,
+        transactions: [TransactionListItem],
+        nextReimbursementIndex: Int?
+    ) -> Double? {
+        let currentIndex = transactions.lastIndex { $0.txnDate <= Self.todayDateString }
+        let startIndex = currentIndex ?? 0
+        let upperBound = nextReimbursementIndex ?? transactions.count
+
+        guard startIndex < upperBound else {
+            if let currentIndex {
+                return max(0, displayRunningBalance(for: transactions[currentIndex], accountClass: account.class))
+            }
+            return max(0, account.openingBalance ?? 0)
+        }
+
+        var maximumUsedCredit = currentIndex.map {
+            max(0, displayRunningBalance(for: transactions[$0], accountClass: account.class))
+        } ?? max(0, account.openingBalance ?? 0)
+
+        for index in startIndex..<upperBound {
+            maximumUsedCredit = max(
+                maximumUsedCredit,
+                max(0, displayRunningBalance(for: transactions[index], accountClass: account.class))
+            )
+        }
+
+        return maximumUsedCredit
     }
 
     private func displayOutAmount(for item: TransactionListItem, accountClass: String) -> Double? {

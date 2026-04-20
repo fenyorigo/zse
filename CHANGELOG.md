@@ -1,3 +1,14 @@
+## 1.1.1
+
+Patch release focused on account visibility management, reporting, and credit-card availability accuracy.
+
+### Highlights
+- Right-click hide and unhide support for individual and grouped accounts in the sidebar
+- Dedicated hidden-account manager from the sidebar toolbar
+- New account report sheet and Reports menu entry
+- More accurate available-before-next-reimbursement calculation for credit cards
+- Clearer credit availability status coloring in account detail views
+
 ## 1.0
 
 First stable release of zse.

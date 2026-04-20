@@ -1,3 +1,16 @@
+zse 1.1.1 is a focused usability update with hidden-account management, account reporting, and more accurate credit-card availability forecasting.
+
+## Highlights
+- Right-click hide and unhide support in the account sidebar
+- Dedicated hidden-account manager from the sidebar toolbar
+- New account report sheet with a Reports menu entry
+- Improved available-before-next-reimbursement calculation for credit cards
+- Clearer credit availability status coloring in account detail views
+
+## Notes
+- Hidden-account management currently applies to asset and liability accounts
+- Account reports are generated from selected account leaves and date bounds
+
 zse 1.1 improves day-to-day usability with persistent filtering, better credit-card monitoring, and a new balance chart view for accounts and subaccounts.
 
 ## Highlights

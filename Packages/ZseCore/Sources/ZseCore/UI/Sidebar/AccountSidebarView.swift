@@ -14,7 +14,7 @@ struct AccountSidebarView: View {
                             .foregroundStyle(.tertiary)
                     } else {
                         ForEach(sectionModel.nodes) { node in
-                            SidebarNodeRow(node: node, selection: $selection)
+                            SidebarNodeRow(viewModel: viewModel, node: node, selection: $selection)
                         }
                     }
                 } header: {
@@ -28,6 +28,7 @@ struct AccountSidebarView: View {
 }
 
 private struct SidebarNodeRow: View {
+    @ObservedObject var viewModel: AccountSidebarViewModel
     let node: SidebarNode
     @Binding var selection: SidebarSelection?
     @State private var isExpanded = true
@@ -38,7 +39,7 @@ private struct SidebarNodeRow: View {
         } else {
             DisclosureGroup(isExpanded: $isExpanded) {
                 ForEach(node.children) { childNode in
-                    SidebarNodeRow(node: childNode, selection: $selection)
+                    SidebarNodeRow(viewModel: viewModel, node: childNode, selection: $selection)
                 }
             } label: {
                 selectableLabel
@@ -53,6 +54,19 @@ private struct SidebarNodeRow: View {
             .onTapGesture {
                 if let nodeSelection = node.selection {
                     selection = nodeSelection
+                }
+            }
+            .contextMenu {
+                if case let .account(account) = node.kind,
+                   let accountID = account.id {
+                    Button(account.isHidden ? "Unhide" : "Hide") {
+                        viewModel.setHidden(!account.isHidden, accountID: accountID)
+                        if !viewModel.showHiddenAccounts,
+                           selection == node.selection,
+                           !account.isHidden {
+                            selection = nil
+                        }
+                    }
                 }
             }
     }

@@ -424,6 +424,15 @@ struct TransactionRepository {
         }
     }
 
+    func latestTransactionDateString() throws -> String? {
+        try databaseManager.dbQueue.read { db in
+            try String.fetchOne(
+                db,
+                sql: "SELECT MAX(txn_date) FROM transactions"
+            )
+        }
+    }
+
     func hasEntries(forAccountID accountID: Int64) throws -> Bool {
         try databaseManager.dbQueue.read { db in
             try Entry

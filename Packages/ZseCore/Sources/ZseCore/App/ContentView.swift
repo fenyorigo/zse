@@ -28,6 +28,8 @@ struct ContentView: View {
     @State private var isShowingNewTransactionSheet = false
     @State private var isShowingImportTransactionsSheet = false
     @State private var isShowingExportTransactionsSheet = false
+    @State private var isShowingAccountReportSheet = false
+    @State private var isShowingHiddenAccountManagerSheet = false
     @State private var isShowingRecurringRuleSheet = false
     @State private var isShowingDeleteAccountConfirmation = false
     @State private var accountDeletionErrorMessage: String?
@@ -119,6 +121,12 @@ struct ContentView: View {
             .sheet(isPresented: $isShowingExportTransactionsSheet) {
                 exportTransactionsSheet
             }
+            .sheet(isPresented: $isShowingAccountReportSheet) {
+                accountReportSheet
+            }
+            .sheet(isPresented: $isShowingHiddenAccountManagerSheet) {
+                HiddenAccountManagerSheet(viewModel: sidebarViewModel)
+            }
             .sheet(isPresented: $isShowingRecurringRuleSheet) {
                 recurringRuleSheet
             }
@@ -208,6 +216,9 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .openExportTransactionsSheet)) { _ in
                 isShowingExportTransactionsSheet = true
             }
+            .onReceive(NotificationCenter.default.publisher(for: .openAccountReportSheet)) { _ in
+                isShowingAccountReportSheet = true
+            }
             .onReceive(NotificationCenter.default.publisher(for: .openNewRecurringSheet)) { _ in
                 isShowingRecurringRuleSheet = true
             }
@@ -239,6 +250,11 @@ struct ContentView: View {
                             get: { sidebarViewModel.showHiddenAccounts },
                             set: { sidebarViewModel.setShowHiddenAccounts($0) }
                         ))
+                    }
+                    ToolbarItem {
+                        Button("Manage Hidden") {
+                            isShowingHiddenAccountManagerSheet = true
+                        }
                     }
                 }
             } detail: {
@@ -417,6 +433,11 @@ struct ContentView: View {
             selectedAccount: accountDetailViewModel.currentSelectedAccount
         )
         .environmentObject(appState)
+    }
+
+    private var accountReportSheet: some View {
+        AccountReportSheet()
+            .environmentObject(appState)
     }
 
     private func reloadContent() {

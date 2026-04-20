@@ -2,6 +2,12 @@ import Foundation
 
 @MainActor
 final class AccountSidebarViewModel: ObservableObject {
+    struct HiddenAccountOption: Identifiable, Hashable {
+        let id: Int64
+        let fullPath: String
+        let isHidden: Bool
+    }
+
     private static let creditCardSubtypes: Set<String> = [
         "credit",
         "credit_card"
@@ -87,6 +93,45 @@ final class AccountSidebarViewModel: ObservableObject {
         reload()
     }
 
+    func setHidden(_ isHidden: Bool, accountID: Int64) {
+        do {
+            guard var account = try accountRepository.getAccount(id: accountID) else {
+                return
+            }
+
+            guard account.isHidden != isHidden else {
+                return
+            }
+
+            account.isHidden = isHidden
+            try accountRepository.updateAccount(account)
+            reload()
+            lastErrorMessage = nil
+        } catch {
+            lastErrorMessage = error.localizedDescription
+        }
+    }
+
+    func hiddenAccountOptions() -> [HiddenAccountOption] {
+        accountsByID.values
+            .filter { account in
+                account.class == "asset" || account.class == "liability"
+            }
+            .compactMap { account -> HiddenAccountOption? in
+                guard let accountID = account.id else {
+                    return nil
+                }
+                return HiddenAccountOption(
+                    id: accountID,
+                    fullPath: accountPath(for: account),
+                    isHidden: account.isHidden
+                )
+            }
+            .sorted { lhs, rhs in
+                lhs.fullPath.localizedCaseInsensitiveCompare(rhs.fullPath) == .orderedAscending
+            }
+    }
+
     private func adjustedBalancesByAccountID(accounts: [Account]) throws -> [Int64: Double] {
         var balancesByAccountID = try accountRepository.getAccountBalances()
 
@@ -142,4 +187,17 @@ final class AccountSidebarViewModel: ObservableObject {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: Date())
     }()
+
+    private func accountPath(for account: Account) -> String {
+        var components = [account.name]
+        var currentParentID = account.parentID
+
+        while let parentID = currentParentID,
+              let parent = accountsByID[parentID] {
+            components.append(parent.name)
+            currentParentID = parent.parentID
+        }
+
+        return components.reversed().joined(separator: " / ")
+    }
 }
