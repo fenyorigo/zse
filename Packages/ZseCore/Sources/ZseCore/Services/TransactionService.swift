@@ -95,6 +95,7 @@ struct TransactionService {
         state: String
     ) throws {
         try transactionRepository.writeInTransaction { db in
+            let existingTransaction = try requireTransaction(transactionID: transactionID, db: db)
             _ = try requirePostableLeafAccount(id: currentAccountID, db: db)
             let counterpartAccount = try requirePostableLeafAccount(id: counterpartAccountID, db: db)
 
@@ -220,6 +221,15 @@ struct TransactionService {
                 entries: [updatedCurrentEntry, updatedCounterpartEntry],
                 db: db
             )
+            try clearStatusWarningIfNeeded(
+                transactionID: transactionID,
+                previousDate: existingTransaction.txnDate,
+                previousState: existingTransaction.state,
+                newDate: txnDate,
+                newState: state,
+                existingWarningReason: existingTransaction.statusWarningReason,
+                db: db
+            )
         }
     }
 
@@ -298,10 +308,15 @@ struct TransactionService {
                 state: state,
                 db: db
             )
-
-            if transaction.state != state {
-                try transactionRepository.clearStatusWarning(transactionID: transactionID, db: db)
-            }
+            try clearStatusWarningIfNeeded(
+                transactionID: transactionID,
+                previousDate: transaction.txnDate,
+                previousState: transaction.state,
+                newDate: transaction.txnDate,
+                newState: state,
+                existingWarningReason: transaction.statusWarningReason,
+                db: db
+            )
         }
     }
 
@@ -827,10 +842,46 @@ struct TransactionService {
             state: state,
             db: db
         )
+        try clearStatusWarningIfNeeded(
+            transactionID: transactionID,
+            previousDate: existingTransaction.txnDate,
+            previousState: existingTransaction.state,
+            newDate: txnDate,
+            newState: state,
+            existingWarningReason: existingTransaction.statusWarningReason,
+            db: db
+        )
+    }
 
-        if existingTransaction.state != state {
+    private func clearStatusWarningIfNeeded(
+        transactionID: Int64,
+        previousDate: String,
+        previousState: String,
+        newDate: String,
+        newState: String,
+        existingWarningReason: String?,
+        db: Database
+    ) throws {
+        if previousState != newState {
             try transactionRepository.clearStatusWarning(transactionID: transactionID, db: db)
+            return
         }
+
+        guard previousDate != newDate,
+              let existingWarningReason,
+              Self.dateBasedWarningReasons.contains(existingWarningReason) else {
+            return
+        }
+
+        let updatedWarningReason = currentDateBasedWarningReason(
+            state: newState,
+            txnDate: newDate
+        )
+        guard updatedWarningReason == nil else {
+            return
+        }
+
+        try transactionRepository.clearStatusWarning(transactionID: transactionID, db: db)
     }
 
     private func requirePositiveAmount(
@@ -847,6 +898,39 @@ struct TransactionService {
 
         return amount
     }
+
+    private func currentDateBasedWarningReason(state: String, txnDate: String) -> String? {
+        let today = Self.warningDateFormatter.string(from: Date())
+
+        if state == "cleared" && txnDate > today {
+            return "cleared_future_date"
+        }
+
+        if state == "reconciling" && txnDate < today {
+            return "pending_past_date"
+        }
+
+        if state == "uncleared" && txnDate < today {
+            return "uncleared_past_date"
+        }
+
+        return nil
+    }
+
+    private static let dateBasedWarningReasons: Set<String> = [
+        "cleared_future_date",
+        "pending_past_date",
+        "uncleared_past_date"
+    ]
+
+    private static let warningDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 }
 
 enum TransactionServiceError: Error, LocalizedError {

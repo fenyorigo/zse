@@ -1,3 +1,15 @@
+zse 1.1.3 refines overdue transaction handling so warning styling follows the current date and clears correctly when transactions are fixed.
+
+## Highlights
+- Dynamic overdue highlighting in transaction lists based on the current date
+- Imported warning flags remain distinct from live overdue evaluation
+- Clearing a transaction now reliably removes overdue warning styling
+- Editing a transaction date to a non-overdue value now clears date-based warning flags
+
+## Notes
+- Overdue highlighting is UI-driven and reevaluated against the current date
+- Imported warnings still remain until the transaction is corrected manually
+
 zse 1.1.1 is a focused usability update with hidden-account management, account reporting, and more accurate credit-card availability forecasting.
 
 ## Highlights

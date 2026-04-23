@@ -1,3 +1,14 @@
+## 1.1.3
+
+Patch release focused on overdue transaction highlighting and warning cleanup behavior.
+
+### Highlights
+- Overdue transaction highlighting now updates dynamically in the UI based on the current date
+- Imported warning flags remain persistent until the transaction is corrected manually
+- Changing a transaction to `Cleared` now reliably removes overdue warning styling
+- Changing a transaction date so it is no longer overdue now clears date-based warning flags as well
+- Internal cleanup to keep transaction warning behavior consistent across edit paths
+
 ## 1.1.2
 
 Patch release focused on persistent hierarchical account visibility and follow-up simplifications.

@@ -424,7 +424,7 @@ struct AccountDetailView: View {
                         }
 
                         TableColumn("State", value: \.state) { item in
-                            stateCell(for: item)
+                            stateCell(for: item, accountClass: account.class)
                         }
 
                         TableColumn("Running Balance") { item in
@@ -769,7 +769,7 @@ struct AccountDetailView: View {
     }
 
     @ViewBuilder
-    private func stateCell(for item: TransactionListItem) -> some View {
+    private func stateCell(for item: TransactionListItem, accountClass: String) -> some View {
         if singleSelectedTransactionID == item.id, inlineEditingTransactionID == item.id {
             Picker(
                 "",
@@ -795,7 +795,7 @@ struct AccountDetailView: View {
                 requestFinishInlineEditing(commit: false)
             }
         } else {
-            statusBadgeCell(for: item)
+            statusBadgeCell(for: item, accountClass: accountClass)
         }
     }
 
@@ -806,10 +806,11 @@ struct AccountDetailView: View {
     }
 
     @ViewBuilder
-    private func statusBadgeCell(for item: TransactionListItem) -> some View {
+    private func statusBadgeCell(for item: TransactionListItem, accountClass: String) -> some View {
         let badge = statusBadge(for: item.state)
         let isSelected = selectedTransactionIDs.contains(item.id)
-        let badgeColor = item.statusWarningFlag ? Self.warningStatusColor : badge?.color
+        let hasWarning = hasStatusWarning(for: item, accountClass: accountClass)
+        let badgeColor = hasWarning ? Self.warningStatusColor : badge?.color
 
         if let badge, let badgeColor {
             Text(badge.title)
@@ -821,7 +822,7 @@ struct AccountDetailView: View {
                     in: RoundedRectangle(cornerRadius: 6, style: .continuous)
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
-        } else if item.statusWarningFlag {
+        } else if hasWarning {
             Text(displayTitle(for: item.state))
                 .lineLimit(1)
                 .padding(.horizontal, 6)
@@ -845,6 +846,27 @@ struct AccountDetailView: View {
         default:
             return "Uncleared"
         }
+    }
+
+    private func hasStatusWarning(for item: TransactionListItem, accountClass: String) -> Bool {
+        item.statusWarningFlag || dynamicOverdueWarningReason(for: item, accountClass: accountClass) != nil
+    }
+
+    private func dynamicOverdueWarningReason(
+        for item: TransactionListItem,
+        accountClass: String
+    ) -> String? {
+        let today = Self.todayDateString
+
+        if item.state == "reconciling" && item.txnDate < today {
+            return accountClass == "liability" ? nil : "pending_past_date"
+        }
+
+        if item.state == "uncleared" && item.txnDate < today {
+            return "uncleared_past_date"
+        }
+
+        return nil
     }
 
     private func statusBadge(for state: String) -> (title: String, color: Color)? {
@@ -1632,7 +1654,9 @@ struct AccountDetailView: View {
 
     private static let allPartnersFilterValue = "__all_partners__"
     private static let allCategoriesFilterValue = "__all_categories__"
-    private static let todayDateString = inlineDateFormatter.string(from: Date())
+    private static var todayDateString: String {
+        inlineDateFormatter.string(from: Date())
+    }
     private static let clearedStatusColor = Color(
         red: 191 / 255,
         green: 229 / 255,
