@@ -21,7 +21,7 @@ struct AccountUIPreference: Codable, FetchableRecord, MutablePersistableRecord, 
         createdAt: String? = nil,
         updatedAt: String? = nil
     ) {
-        let timestamp = Account.makeTimestamp()
+        let timestamp = ZseTimestamp.make()
         self.accountID = accountID
         self.transactionStatusFilter = transactionStatusFilter
         self.afterDateFilter = afterDateFilter

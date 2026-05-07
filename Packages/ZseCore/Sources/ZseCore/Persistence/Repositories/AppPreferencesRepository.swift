@@ -9,11 +9,16 @@ struct AppPreferencesRepository {
     }
 
     func fetchPreferences() throws -> AppPreferences {
-        try databaseManager.dbQueue.write { db in
+        if let existing = try databaseManager.dbQueue.read({ db in
+            try AppPreferences.fetchOne(db, key: 1)
+        }) {
+            return existing
+        }
+
+        return try databaseManager.writeInTransaction { db in
             if let preferences = try AppPreferences.fetchOne(db, key: 1) {
                 return preferences
             }
-
             var preferences = AppPreferences()
             try preferences.insert(db)
             return preferences
@@ -38,7 +43,7 @@ struct AppPreferencesRepository {
             var preferences = existingPreferences ?? AppPreferences()
             preferences.backupDirectoryPath = path
             preferences.backupDirectoryBookmarkData = bookmarkData
-            preferences.updatedAt = Account.makeTimestamp()
+            preferences.updatedAt = ZseTimestamp.make()
 
             if existingPreferences == nil {
                 try preferences.insert(db)

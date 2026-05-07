@@ -173,7 +173,7 @@ final class EditAccountViewModel: ObservableObject {
         updatedAccount.openingBalance = openingBalance
         updatedAccount.openingBalanceDate = openingBalanceDateString
         updatedAccount.sortOrder = Int(sortOrderText) ?? 0
-        updatedAccount.updatedAt = Account.makeTimestamp()
+        updatedAccount.updatedAt = ZseTimestamp.make()
 
         do {
             try accountRepository.updateAccount(updatedAccount)

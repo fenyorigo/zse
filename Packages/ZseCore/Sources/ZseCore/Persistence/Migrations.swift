@@ -221,12 +221,6 @@ enum Migrations {
             }
         }
 
-        migrator.registerMigration("addBackupDirectoryBookmarkToAppPreferences") { db in
-            try db.alter(table: "app_preferences") { table in
-                table.add(column: "backup_directory_bookmark_data", .blob)
-            }
-        }
-
         return migrator
     }()
 }

@@ -27,7 +27,7 @@ struct Transaction: Codable, FetchableRecord, MutablePersistableRecord, Identifi
         createdAt: String? = nil,
         updatedAt: String? = nil
     ) {
-        let timestamp = Transaction.makeTimestamp()
+        let timestamp = ZseTimestamp.make()
         self.id = id
         self.txnDate = txnDate
         self.description = description
@@ -70,9 +70,4 @@ struct Transaction: Codable, FetchableRecord, MutablePersistableRecord, Identifi
         case updatedAt = "updated_at"
     }
 
-    private static func makeTimestamp() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
-    }
 }

@@ -41,7 +41,7 @@ struct Account: Codable, FetchableRecord, MutablePersistableRecord, Identifiable
         createdAt: String? = nil,
         updatedAt: String? = nil
     ) {
-        let timestamp = Account.makeTimestamp()
+        let timestamp = ZseTimestamp.make()
         self.id = id
         self.parentID = parentID
         self.name = name
@@ -105,9 +105,4 @@ struct Account: Codable, FetchableRecord, MutablePersistableRecord, Identifiable
         case updatedAt = "updated_at"
     }
 
-    static func makeTimestamp() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
-    }
 }

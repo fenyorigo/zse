@@ -95,7 +95,7 @@ struct FxRateImportService {
         relevantCurrencies: Set<String>,
         latestRates: LatestRateSource
     ) -> [FxRate] {
-        let downloadedAt = FxRate.makeTimestamp()
+        let downloadedAt = ZseTimestamp.make()
         var ratesToStore: [FxRate] = []
 
         for currencyCode in relevantCurrencies.sorted() {

@@ -425,10 +425,9 @@ struct ImportServiceMoneydanceStatusTests {
         let result = try harness.importService.commitImport(parsedFile)
         #expect(result.importedTransactionCount == 1, "Expected reimbursement transfer to import")
 
-        let creditAccountID = try harness.databaseManager.dbQueue.read { db in
+        let creditAccountID = try #require(harness.databaseManager.dbQueue.read { db in
             try Int64.fetchOne(db, sql: "SELECT id FROM accounts WHERE name = 'Erste credit' LIMIT 1")
-        }
-        let creditAccountID = try #require(creditAccountID)
+        })
 
         let ledgerItems = try harness.transactionRepository.fetchTransactions(forAccountID: creditAccountID)
         #expect(ledgerItems.count == 1, "Expected reimbursement to appear on the credit-card ledger")
@@ -481,13 +480,12 @@ struct ImportServiceMoneydanceStatusTests {
         #expect(result.expenseCount == 1, "Expected the imported transaction to be booked as expense")
         #expect(result.incomeCount == 0, "Expected no income booking for the utility expense")
 
-        let sourceAccountID = try harness.databaseManager.dbQueue.read { db in
+        let sourceAccountID = try #require(harness.databaseManager.dbQueue.read { db in
             try Int64.fetchOne(
                 db,
                 sql: "SELECT id FROM accounts WHERE name = 'Peter Erste HUF' LIMIT 1"
             )
-        }
-        let sourceAccountID = try #require(sourceAccountID)
+        })
         let createdCategoryPathCount = try harness.databaseManager.dbQueue.read { db in
             try Int.fetchOne(
                 db,
@@ -555,13 +553,12 @@ struct ImportServiceMoneydanceStatusTests {
         #expect(result.expenseCount == 1, "Expected expense refund to stay in expense classification")
         #expect(result.incomeCount == 0, "Expected expense refund not to be reclassified as income")
 
-        let sourceAccountID = try harness.databaseManager.dbQueue.read { db in
+        let sourceAccountID = try #require(harness.databaseManager.dbQueue.read { db in
             try Int64.fetchOne(
                 db,
                 sql: "SELECT id FROM accounts WHERE name = 'Peter Erste HUF' LIMIT 1"
             )
-        }
-        let sourceAccountID = try #require(sourceAccountID)
+        })
         let sourceLedgerItems = try harness.transactionRepository.fetchTransactions(forAccountID: sourceAccountID)
         #expect(sourceLedgerItems.count == 1, "Expected one source-account refund row")
         #expect(sourceLedgerItems[0].inAmount == 2500, "Expected expense refund to increase the source account")
@@ -585,13 +582,12 @@ struct ImportServiceMoneydanceStatusTests {
         #expect(result.incomeCount == 1, "Expected correction to stay in income classification")
         #expect(result.expenseCount == 0, "Expected income correction not to be reclassified as expense")
 
-        let sourceAccountID = try harness.databaseManager.dbQueue.read { db in
+        let sourceAccountID = try #require(harness.databaseManager.dbQueue.read { db in
             try Int64.fetchOne(
                 db,
                 sql: "SELECT id FROM accounts WHERE name = 'Peter Erste HUF' LIMIT 1"
             )
-        }
-        let sourceAccountID = try #require(sourceAccountID)
+        })
         let sourceLedgerItems = try harness.transactionRepository.fetchTransactions(forAccountID: sourceAccountID)
         #expect(sourceLedgerItems.count == 1, "Expected one source-account correction row")
         #expect(sourceLedgerItems[0].outAmount == 3200, "Expected negative income correction to reduce the source account")

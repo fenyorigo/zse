@@ -50,7 +50,7 @@ struct AccountRepository {
                 return
             }
 
-            let updatedAt = Account.makeTimestamp()
+            let updatedAt = ZseTimestamp.make()
 
             func descendantIDs(for rootAccountID: Int64) -> [Int64] {
                 var orderedIDs: [Int64] = []
@@ -140,7 +140,7 @@ struct AccountRepository {
             }, by: \.0).mapValues { pairs in
                 pairs.map(\.1)
             }
-            let updatedAt = Account.makeTimestamp()
+            let updatedAt = ZseTimestamp.make()
 
             func applyVisibility(accountID: Int64) throws -> Bool {
                 guard var account = accountsByID[accountID] else {

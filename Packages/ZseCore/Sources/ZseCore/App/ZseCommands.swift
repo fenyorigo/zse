@@ -86,7 +86,7 @@ public struct ZseCommands: Commands {
             }
 
             Button("Generate Due Recurring Transactions") {
-                NotificationCenter.default.post(name: .generateDueRecurringTransactions, object: nil)
+                appState.generateDueRecurringTransactionsManually()
             }
         }
 

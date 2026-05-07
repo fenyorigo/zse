@@ -24,7 +24,7 @@ struct FxRate: Codable, FetchableRecord, MutablePersistableRecord, Identifiable 
         self.currencyCode = currencyCode
         self.hufRate = hufRate
         self.source = source
-        self.downloadedAt = downloadedAt ?? FxRate.makeTimestamp()
+        self.downloadedAt = downloadedAt ?? ZseTimestamp.make()
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -49,9 +49,4 @@ struct FxRate: Codable, FetchableRecord, MutablePersistableRecord, Identifiable 
         case downloadedAt = "downloaded_at"
     }
 
-    static func makeTimestamp() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
-    }
 }

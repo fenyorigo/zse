@@ -70,6 +70,10 @@ public final class AppState: ObservableObject {
     let databaseMaintenanceService: DatabaseMaintenanceService
     private var activeBackupFolderSecurityScopedURL: URL?
 
+    deinit {
+        activeBackupFolderSecurityScopedURL?.stopAccessingSecurityScopedResource()
+    }
+
     public init() {
         let databaseManager = DatabaseManager.shared
         self.databaseManager = databaseManager
@@ -653,7 +657,6 @@ extension Notification.Name {
     static let requestDeleteAccount = Notification.Name("requestDeleteAccount")
     static let openNewTransactionSheet = Notification.Name("openNewTransactionSheet")
     static let openNewRecurringSheet = Notification.Name("openNewRecurringSheet")
-    static let generateDueRecurringTransactions = Notification.Name("generateDueRecurringTransactions")
     static let openImportTransactionsSheet = Notification.Name("openImportTransactionsSheet")
     static let openExportTransactionsSheet = Notification.Name("openExportTransactionsSheet")
     static let openAccountReportSheet = Notification.Name("openAccountReportSheet")

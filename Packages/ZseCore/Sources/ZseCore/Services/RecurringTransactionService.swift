@@ -97,7 +97,13 @@ struct RecurringTransactionService {
             var generatedCount = 0
 
             for var rule in candidateRules {
+                var iterationCount = 0
                 while let nextDueDate = rule.nextDueDate, nextDueDate <= horizonDateString {
+                    iterationCount += 1
+                    guard iterationCount <= Self.maxIterationsPerRule else {
+                        break
+                    }
+
                     if try shouldStopGeneration(for: rule, nextDueDate: nextDueDate, db: db) {
                         rule.nextDueDate = nil
                         rule.updatedAt = Self.timestamp()
@@ -503,6 +509,8 @@ struct RecurringTransactionService {
         }
     }
 
+    private static let maxIterationsPerRule = 1000
+
     private static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US_POSIX")
@@ -518,7 +526,7 @@ struct RecurringTransactionService {
     }()
 
     private static func timestamp() -> String {
-        Account.makeTimestamp()
+        ZseTimestamp.make()
     }
 
     func recurringPreviewHorizonDate(from referenceDate: Date = Date()) -> Date {

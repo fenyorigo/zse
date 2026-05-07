@@ -42,18 +42,8 @@ final class DatabaseManager: @unchecked Sendable {
     }
 
     func writeInTransaction<T>(_ updates: (Database) throws -> T) throws -> T {
-        try dbQueue.writeWithoutTransaction { db in
-            var result: T?
-            try db.inTransaction {
-                result = try updates(db)
-                return .commit
-            }
-
-            guard let result else {
-                fatalError("Transaction completed without returning a result.")
-            }
-
-            return result
+        try dbQueue.write { db in
+            try updates(db)
         }
     }
 

@@ -111,7 +111,7 @@ struct RecurringRule: Codable, FetchableRecord, MutablePersistableRecord, Identi
         createdAt: String? = nil,
         updatedAt: String? = nil
     ) {
-        let timestamp = Account.makeTimestamp()
+        let timestamp = ZseTimestamp.make()
         self.id = id
         self.name = name
         self.transactionType = transactionType

@@ -17,7 +17,7 @@ struct AppPreferences: Codable, FetchableRecord, MutablePersistableRecord {
         createdAt: String? = nil,
         updatedAt: String? = nil
     ) {
-        let timestamp = Account.makeTimestamp()
+        let timestamp = ZseTimestamp.make()
         self.id = id
         self.backupDirectoryPath = backupDirectoryPath
         self.backupDirectoryBookmarkData = backupDirectoryBookmarkData

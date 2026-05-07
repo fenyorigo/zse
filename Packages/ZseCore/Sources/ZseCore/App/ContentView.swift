@@ -229,10 +229,6 @@ struct ContentView: View {
             .onReceive(NotificationCenter.default.publisher(for: .openNewRecurringSheet)) { _ in
                 isShowingRecurringRuleSheet = true
             }
-            .onReceive(NotificationCenter.default.publisher(for: .generateDueRecurringTransactions)) { _ in
-                appState.generateDueRecurringTransactionsManually()
-                scheduleReloadContent()
-            }
             .task {
                 scheduleReloadContent()
             }
@@ -338,7 +334,13 @@ struct ContentView: View {
                     Divider()
                 }
 
-                HStack {
+                HStack(spacing: 6) {
+                    Text(appVersion)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Text("·")
+                        .font(.footnote)
+                        .foregroundStyle(.tertiary)
                     Text(appState.fxRatesStatusText)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -445,6 +447,10 @@ struct ContentView: View {
     private var accountReportSheet: some View {
         AccountReportSheet()
             .environmentObject(appState)
+    }
+
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
     }
 
     private func reloadContent() {

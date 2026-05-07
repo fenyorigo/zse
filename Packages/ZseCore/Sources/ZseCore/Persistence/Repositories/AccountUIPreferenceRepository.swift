@@ -26,7 +26,7 @@ struct AccountUIPreferenceRepository {
             preference.transactionStatusFilter = transactionStatusFilter
             preference.afterDateFilter = afterDateFilter
             preference.beforeDateFilter = beforeDateFilter
-            preference.updatedAt = Account.makeTimestamp()
+            preference.updatedAt = ZseTimestamp.make()
 
             if existingPreference == nil {
                 try preference.insert(db)

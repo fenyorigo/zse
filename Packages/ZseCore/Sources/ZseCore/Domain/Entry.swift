@@ -30,7 +30,7 @@ struct Entry: Codable, FetchableRecord, MutablePersistableRecord, Identifiable {
         self.currency = currency
         self.partnerID = partnerID
         self.memo = memo
-        self.createdAt = createdAt ?? Entry.makeTimestamp()
+        self.createdAt = createdAt ?? ZseTimestamp.make()
     }
 
     mutating func didInsert(_ inserted: InsertionSuccess) {
@@ -59,9 +59,4 @@ struct Entry: Codable, FetchableRecord, MutablePersistableRecord, Identifiable {
         case createdAt = "created_at"
     }
 
-    private static func makeTimestamp() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
-    }
 }

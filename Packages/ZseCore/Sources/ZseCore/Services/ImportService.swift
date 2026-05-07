@@ -736,7 +736,7 @@ struct ImportService {
         account.includeInNetWorth = expectedAccount.includeInNetWorth
         account.openingBalance = expectedAccount.openingBalance
         account.openingBalanceDate = expectedAccount.openingBalanceDate
-        account.updatedAt = Account.makeTimestamp()
+        account.updatedAt = ZseTimestamp.make()
         try account.update(db)
     }
 
@@ -896,7 +896,7 @@ struct ImportService {
         if isDirectPostingPath {
             account.isGroup = false
         }
-        account.updatedAt = Account.makeTimestamp()
+        account.updatedAt = ZseTimestamp.make()
         try account.update(db)
     }
 

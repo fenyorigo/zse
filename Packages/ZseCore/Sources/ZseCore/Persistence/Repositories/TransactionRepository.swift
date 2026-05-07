@@ -43,6 +43,7 @@ private struct TransactionListRow: Decodable, FetchableRecord {
     let firstEntryID: Int64
     let recurringRuleID: Int64?
     let recurringOccurrenceDate: String?
+    let runningBalance: Double
 }
 
 struct TransactionDetail: Identifiable {
@@ -156,7 +157,7 @@ struct TransactionRepository {
         transaction.txnDate = txnDate
         transaction.description = description
         transaction.state = state
-        transaction.updatedAt = Self.makeTimestamp()
+        transaction.updatedAt = ZseTimestamp.make()
         try transaction.update(db)
     }
 
@@ -167,7 +168,7 @@ struct TransactionRepository {
 
         transaction.statusWarningFlag = false
         transaction.statusWarningReason = nil
-        transaction.updatedAt = Self.makeTimestamp()
+        transaction.updatedAt = ZseTimestamp.make()
         try transaction.update(db)
     }
 
@@ -244,9 +245,11 @@ struct TransactionRepository {
 
     func fetchTransactions(
         forAccountID accountID: Int64,
+        limit: Int? = nil,
+        offset: Int = 0,
         performanceTrace: PerformanceTrace? = nil
     ) throws -> [TransactionListItem] {
-        let sql = """
+        let innerSQL = """
             SELECT
                 transactions.id AS transactionID,
                 transactions.txn_date AS txnDate,
@@ -286,23 +289,42 @@ struct TransactionRepository {
                 transactions.status_warning_reason,
                 transactions.recurring_rule_id,
                 transactions.recurring_occurrence_date
-            ORDER BY transactions.txn_date ASC, transactions.created_at ASC, transactions.id ASC, firstEntryID ASC
             """
+
+        var outerSQL = """
+            SELECT
+                transactionID, txnDate, createdAt, description,
+                partnerName, categoryName, memoSummary, accountAmount,
+                state, statusWarningFlag, statusWarningReason,
+                firstEntryID, recurringRuleID, recurringOccurrenceDate,
+                ? + SUM(accountAmount) OVER (
+                    ORDER BY txnDate ASC, createdAt ASC, transactionID ASC, firstEntryID ASC
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                ) AS runningBalance
+            FROM (\(innerSQL))
+            ORDER BY txnDate ASC, createdAt ASC, transactionID ASC, firstEntryID ASC
+            """
+
+        if let limit {
+            outerSQL += "\nLIMIT \(limit) OFFSET \(offset)"
+        }
 
         return try databaseManager.dbQueue.read { db in
             let openingBalance = try Double.fetchOne(
                 db,
-                sql: "SELECT opening_balance FROM accounts WHERE id = ?",
+                sql: "SELECT COALESCE(opening_balance, 0) FROM accounts WHERE id = ?",
                 arguments: [accountID]
             ) ?? 0
 
-            let rows = try TransactionListRow.fetchAll(db, sql: sql, arguments: [accountID, accountID])
+            let rows = try TransactionListRow.fetchAll(
+                db,
+                sql: outerSQL,
+                arguments: [openingBalance, accountID, accountID]
+            )
             performanceTrace?.mark("DB fetch finished")
-            var runningBalance = openingBalance
-            let ascendingItems = rows.map { row in
-                runningBalance += row.accountAmount
 
-                return TransactionListItem(
+            return rows.map { row in
+                TransactionListItem(
                     transactionID: row.transactionID,
                     txnDate: row.txnDate,
                     createdAt: row.createdAt,
@@ -315,15 +337,12 @@ struct TransactionRepository {
                     state: row.state,
                     statusWarningFlag: row.statusWarningFlag,
                     statusWarningReason: row.statusWarningReason,
-                    runningBalance: runningBalance,
+                    runningBalance: row.runningBalance,
                     firstEntryID: row.firstEntryID,
                     recurringRuleID: row.recurringRuleID,
                     recurringOccurrenceDate: row.recurringOccurrenceDate
                 )
             }
-            performanceTrace?.mark("Running balance finished")
-
-            return ascendingItems
         }
     }
 
@@ -472,10 +491,3 @@ enum PersistenceError: Error, LocalizedError {
     }
 }
 
-private extension TransactionRepository {
-    static func makeTimestamp() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter.string(from: Date())
-    }
-}
