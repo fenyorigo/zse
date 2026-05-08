@@ -520,6 +520,37 @@ struct AccountDetailView: View {
                     finishInlineEditing(commit: false)
                 }
             }
+            .onChange(of: statusFilter) { _, _ in
+                guard !isRestoringFilterState else { return }
+                storeCurrentFilterState()
+                refreshBalanceChart(for: account)
+            }
+            .onChange(of: selectedPartnerName) { _, _ in
+                guard !isRestoringFilterState else { return }
+                storeCurrentFilterState()
+            }
+            .onChange(of: selectedCategoryName) { _, _ in
+                guard !isRestoringFilterState else { return }
+                storeCurrentFilterState()
+            }
+            .onChange(of: searchText) { _, _ in
+                guard !isRestoringFilterState else { return }
+                storeCurrentFilterState()
+            }
+            .onChange(of: includeProjectedRecurring) { _, _ in
+                guard !isRestoringFilterState else { return }
+                storeCurrentFilterState()
+            }
+            .onChange(of: afterDate) { _, _ in
+                guard !isRestoringFilterState else { return }
+                storeCurrentFilterState()
+                refreshBalanceChart(for: account)
+            }
+            .onChange(of: beforeDate) { _, _ in
+                guard !isRestoringFilterState else { return }
+                storeCurrentFilterState()
+                refreshBalanceChart(for: account)
+            }
             if let creditCardAvailability = creditCardAvailabilitySummary(
                 for: account,
                 transactions: transactions
